@@ -27,14 +27,6 @@ console.log(result);
 await client.close();
 ```
 
-## Examples
-
-See the `/examples` directory for complete usage examples:
-
-- `examples/flightsql-localhost.ts` - Local development setup
-- `examples/flightsql-production.ts` - Production TLS connection
-- `examples/flight.ts` - Low-level Flight client
-
 ## Dependencies
 
 - `@grpc/grpc-js` - gRPC implementation
