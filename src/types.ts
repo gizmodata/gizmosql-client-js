@@ -1,5 +1,3 @@
-import { RecordBatch } from 'apache-arrow';
-
 export interface FlightClientConfig {
   host: string;
   port: number;
@@ -9,12 +7,6 @@ export interface FlightClientConfig {
 }
 
 export type FlightSQLClientConfig = FlightClientConfig;
-
-export interface QueryResult {
-  schema: any;
-  batches: RecordBatch[];
-  recordCount: number;
-}
 
 export interface PreparedStatement {
   handle: Uint8Array;

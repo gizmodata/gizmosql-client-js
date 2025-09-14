@@ -1,5 +1,10 @@
-import { validateConfig, createCredentialsMetadata, parseErrorFromGrpc, arrowToJsonRows, createConnectionString } from '../src/utils';
-import { FlightError } from '../src/errors';
+import {
+  createConnectionString,
+  createCredentialsMetadata,
+  parseErrorFromGrpc,
+  validateConfig
+} from '../src/utils';
+import {FlightError} from '../src';
 
 describe('Utils', () => {
   describe('validateConfig', () => {
@@ -68,7 +73,7 @@ describe('Utils', () => {
     });
 
     it('should return empty object for undefined credentials', () => {
-      const metadata = createCredentialsMetadata(undefined, undefined);
+      const metadata = createCredentialsMetadata();
       expect(metadata).toEqual({});
     });
 
@@ -81,7 +86,7 @@ describe('Utils', () => {
       const metadata = createCredentialsMetadata('user');
       expect(metadata).toEqual({});
 
-      const metadata2 = createCredentialsMetadata('user', undefined);
+      const metadata2 = createCredentialsMetadata('user');
       expect(metadata2).toEqual({});
     });
 
@@ -145,7 +150,7 @@ describe('Utils', () => {
 
       expect(flightError).toBeInstanceOf(FlightError);
       expect(flightError.message).toBe('Some error');
-      expect(flightError.code).toBe(undefined);
+      expect(flightError.code).toBeUndefined();
     });
 
     it('should handle completely malformed errors', () => {
@@ -154,25 +159,7 @@ describe('Utils', () => {
 
       expect(flightError).toBeInstanceOf(FlightError);
       expect(flightError.message).toBe('Unknown error');
-      expect(flightError.code).toBe(undefined);
-    });
-  });
-
-  describe('arrowToJsonRows', () => {
-    it('should handle empty batches', () => {
-      const rows = arrowToJsonRows([]);
-      expect(rows).toEqual([]);
-    });
-
-    it('should be a function that processes Arrow batches', () => {
-      // Since properly mocking Apache Arrow is complex, we just verify
-      // the function exists and handles basic input validation
-      expect(typeof arrowToJsonRows).toBe('function');
-
-      // Test with empty array (no Apache Arrow dependencies)
-      const result = arrowToJsonRows([]);
-      expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBe(0);
+      expect(flightError.code).toBeUndefined();
     });
   });
 });

@@ -21,8 +21,12 @@ const client = new FlightSQLClient({
   password: 'your-password'
 });
 
-const result = await client.execute('SELECT * FROM table');
-console.log(result);
+// This 'table' has type Arrow.dom.Table
+// https://arrow.apache.org/js/current/classes/Arrow.dom.Table.html
+const table = await client.executeQuery('SELECT count(*) AS n FROM logs');
+// Use the 'toArray()' method to convert the table to an array of row objects, for example:
+// [ {"n": 3} ]
+console.log(table.toArray());
 
 await client.close();
 ```

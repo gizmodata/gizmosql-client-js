@@ -1,22 +1,21 @@
-import { Schema } from 'apache-arrow';
-import { FlightClient } from './flight-client';
-import { FlightDescriptor } from './generated/proto/Flight_pb';
+import {Schema, Table} from 'apache-arrow';
+import {FlightClient} from './flight-client';
+import {FlightDescriptor} from './generated/proto/Flight_pb';
 import {
-  CommandStatementQuery,
-  CommandPreparedStatementQuery,
+  ActionClosePreparedStatementRequest,
+  ActionCreatePreparedStatementRequest,
   CommandGetCatalogs,
   CommandGetDbSchemas,
+  CommandGetImportedKeys,
+  CommandGetPrimaryKeys,
   CommandGetTables,
   CommandGetTableTypes,
-  CommandGetPrimaryKeys,
-  CommandGetImportedKeys,
-  ActionCreatePreparedStatementRequest,
-  ActionClosePreparedStatementRequest
+  CommandPreparedStatementQuery,
+  CommandStatementQuery
 } from './generated/proto/FlightSql_pb';
-import { Any } from 'google-protobuf/google/protobuf/any_pb';
-import { FlightSQLClientConfig, QueryResult, PreparedStatement, TableMetadata } from './types';
-import { FlightSQLError, FlightError } from './errors';
-import { arrowToJsonRows } from './utils';
+import {Any} from 'google-protobuf/google/protobuf/any_pb';
+import {FlightSQLClientConfig, PreparedStatement, TableMetadata} from './types';
+import {FlightError, FlightSQLError} from './errors';
 
 /**
  * FlightSQL client implementation extending the base Flight client.
@@ -53,19 +52,10 @@ export class FlightSQLClient extends FlightClient {
   }
 
   /**
-   * Executes a SQL query and returns results as JSON rows.
-   * This is a convenience method that combines executeQuery and result transformation.
-   */
-  async execute(query: string): Promise<any[]> {
-    const result = await this.executeQuery(query);
-    return arrowToJsonRows(result.batches);
-  }
-
-  /**
    * Executes a SQL query and returns the raw Arrow result.
    * Provides access to schema information and Arrow batches.
    */
-  async executeQuery(query: string): Promise<QueryResult> {
+  async execute(query: string): Promise<Table> {
     try {
       const command = new CommandStatementQuery();
       command.setQuery(query);
@@ -172,8 +162,8 @@ export class FlightSQLClient extends FlightClient {
         throw new FlightSQLError('No ticket returned from endpoint');
       }
 
-      const result = await this.doGet(ticket);
-      return arrowToJsonRows(result.batches);
+      const table = await this.doGet(ticket);
+      return table.toArray();
     } catch (error) {
       throw new FlightSQLError(`Failed to execute prepared statement: ${error}`);
     }
@@ -213,8 +203,8 @@ export class FlightSQLClient extends FlightClient {
         return [];
       }
 
-      const result = await this.doGet(ticket);
-      const rows = arrowToJsonRows(result.batches);
+      const table = await this.doGet(ticket);
+      const rows = table.toArray();
       return rows.map(row => row.catalog_name);
     } catch (error) {
       throw new FlightSQLError(`Failed to get catalogs: ${error}`);
@@ -244,8 +234,8 @@ export class FlightSQLClient extends FlightClient {
         return [];
       }
 
-      const result = await this.doGet(ticket);
-      const rows = arrowToJsonRows(result.batches);
+      const table = await this.doGet(ticket);
+      const rows = table.toArray();
       return rows.map(row => ({
         catalog: row.catalog_name,
         schema: row.db_schema_name
@@ -255,7 +245,7 @@ export class FlightSQLClient extends FlightClient {
     }
   }
 
-  async getTables(catalog?: string, dbSchema?: string, table?: string, tableTypes?: string[]): Promise<Array<{
+  async getTables(catalog?: string, dbSchema?: string, tableName?: string, tableTypes?: string[]): Promise<Array<{
     catalog: string;
     schema: string;
     tableName: string;
@@ -265,7 +255,7 @@ export class FlightSQLClient extends FlightClient {
       const command = new CommandGetTables();
       if (catalog) command.setCatalog(catalog);
       if (dbSchema) command.setDbSchemaFilterPattern(dbSchema);
-      if (table) command.setTableNameFilterPattern(table);
+      if (tableName) command.setTableNameFilterPattern(tableName);
       if (tableTypes) command.setTableTypesList(tableTypes);
 
       const descriptor = new FlightDescriptor();
@@ -284,8 +274,8 @@ export class FlightSQLClient extends FlightClient {
         return [];
       }
 
-      const result = await this.doGet(ticket);
-      const rows = arrowToJsonRows(result.batches);
+      const table = await this.doGet(ticket);
+      const rows = table.toArray();
       return rows.map(row => ({
         catalog: row.catalog_name,
         schema: row.db_schema_name,
@@ -317,20 +307,20 @@ export class FlightSQLClient extends FlightClient {
         return [];
       }
 
-      const result = await this.doGet(ticket);
-      const rows = arrowToJsonRows(result.batches);
+      const table = await this.doGet(ticket);
+      const rows = table.toArray();
       return rows.map(row => row.table_type);
     } catch (error) {
       throw new FlightSQLError(`Failed to get table types: ${error}`);
     }
   }
 
-  async getPrimaryKeys(catalog: string, dbSchema: string, table: string): Promise<TableMetadata['primaryKeys']> {
+  async getPrimaryKeys(catalog: string, dbSchema: string, tableName: string): Promise<TableMetadata['primaryKeys']> {
     try {
       const command = new CommandGetPrimaryKeys();
       command.setCatalog(catalog);
       command.setDbSchema(dbSchema);
-      command.setTable(table);
+      command.setTable(tableName);
 
       const descriptor = new FlightDescriptor();
       descriptor.setType(FlightDescriptor.DescriptorType.CMD);
@@ -348,8 +338,8 @@ export class FlightSQLClient extends FlightClient {
         return [];
       }
 
-      const result = await this.doGet(ticket);
-      const rows = arrowToJsonRows(result.batches);
+      const table = await this.doGet(ticket);
+      const rows = table.toArray();
       return rows.map(row => ({
         catalogName: row.catalog_name,
         schemaName: row.db_schema_name,
@@ -362,12 +352,12 @@ export class FlightSQLClient extends FlightClient {
     }
   }
 
-  async getForeignKeys(catalog: string, dbSchema: string, table: string): Promise<TableMetadata['foreignKeys']> {
+  async getForeignKeys(catalog: string, dbSchema: string, tableName: string): Promise<TableMetadata['foreignKeys']> {
     try {
       const command = new CommandGetImportedKeys();
       command.setCatalog(catalog);
       command.setDbSchema(dbSchema);
-      command.setTable(table);
+      command.setTable(tableName);
 
       const descriptor = new FlightDescriptor();
       descriptor.setType(FlightDescriptor.DescriptorType.CMD);
@@ -385,8 +375,8 @@ export class FlightSQLClient extends FlightClient {
         return [];
       }
 
-      const result = await this.doGet(ticket);
-      const rows = arrowToJsonRows(result.batches);
+      const table = await this.doGet(ticket);
+      const rows = table.toArray();
       return rows.map(row => ({
         pkCatalogName: row.pk_catalog_name,
         pkSchemaName: row.pk_db_schema_name,

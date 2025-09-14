@@ -1,4 +1,3 @@
-import { RecordBatch, Table } from 'apache-arrow';
 import { FlightError } from './errors';
 
 export function createConnectionString(host: string, port: number, plaintext: boolean): string {
@@ -13,25 +12,6 @@ export function validateConfig(config: { host: string; port: number }): void {
   if (!config.port || config.port <= 0) {
     throw new FlightError('Valid port number is required');
   }
-}
-
-export function arrowToJsonRows(batches: RecordBatch[]): any[] {
-  const rows: any[] = [];
-
-  for (const batch of batches) {
-    const table = new Table([batch]);
-    for (let i = 0; i < table.numRows; i++) {
-      const row: any = {};
-      for (let j = 0; j < table.numCols; j++) {
-        const field = table.schema.fields[j];
-        const column = table.getChild(field.name);
-        row[field.name] = column?.get(i);
-      }
-      rows.push(row);
-    }
-  }
-
-  return rows;
 }
 
 export function createCredentialsMetadata(username?: string, password?: string): any {

@@ -91,24 +91,6 @@ describe('FlightSQLClient', () => {
       await expect(client.close()).resolves.not.toThrow();
     });
 
-    describe('execute method', () => {
-      it('should call executeQuery and transform results', async () => {
-        const mockQueryResult = {
-          schema: null,
-          batches: [] as any[],
-          recordCount: 0
-        };
-
-        jest.spyOn(client, 'executeQuery').mockResolvedValue(mockQueryResult);
-        jest.spyOn(require('../src/utils'), 'arrowToJsonRows').mockReturnValue([{ test: 'value' }]);
-
-        const result = await client.execute('SELECT 1');
-
-        expect(client.executeQuery).toHaveBeenCalledWith('SELECT 1');
-        expect(Array.isArray(result)).toBe(true);
-      });
-    });
-
     describe('prepared statements', () => {
       it('should create prepared statement structure', async () => {
         // Mock the doAction method to simulate server response
@@ -166,30 +148,18 @@ describe('FlightSQLClient', () => {
           getEndpointList: jest.fn().mockReturnValue([mockEndpoint])
         });
 
-        jest.spyOn(client as any, 'doGet').mockResolvedValue({
-          batches: [{
-            numRows: 2,
-            schema: { fields: [{ name: 'catalog_name' }] }
-          }]
-        });
+        const mockTable = {
+          toArray: jest.fn().mockReturnValue([
+            { catalog_name: 'catalog1' },
+            { catalog_name: 'catalog2' }
+          ])
+        };
 
-        // Mock arrowToJsonRows utility
-        const mockArrowToJsonRows = jest.fn().mockReturnValue([
-          { catalog_name: 'catalog1' },
-          { catalog_name: 'catalog2' }
-        ]);
-
-        // Replace the import temporarily for this test
-        const utils = require('../src/utils');
-        const originalFn = utils.arrowToJsonRows;
-        utils.arrowToJsonRows = mockArrowToJsonRows;
+        jest.spyOn(client as any, 'doGet').mockResolvedValue(mockTable);
 
         const catalogs = await client.getCatalogs();
 
         expect(catalogs).toEqual(['catalog1', 'catalog2']);
-
-        // Restore original function
-        utils.arrowToJsonRows = originalFn;
       });
     });
   });

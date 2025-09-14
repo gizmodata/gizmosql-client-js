@@ -1,5 +1,5 @@
 import * as grpc from '@grpc/grpc-js';
-import { RecordBatchStreamReader, Schema, tableFromIPC } from 'apache-arrow';
+import {Schema, Table, tableFromIPC} from 'apache-arrow';
 import { FlightServiceClient } from './generated/proto/Flight_grpc_pb';
 import {
   FlightDescriptor,
@@ -13,15 +13,15 @@ import {
   Criteria,
   Empty
 } from './generated/proto/Flight_pb';
-import { FlightClientConfig, QueryResult } from './types';
+import { FlightClientConfig } from './types';
 import { ConnectionError, AuthenticationError, FlightError } from './errors';
 import { validateConfig, createCredentialsMetadata, parseErrorFromGrpc } from './utils';
 
 export class FlightClient {
   private client: FlightServiceClient | null = null;
   private config: FlightClientConfig;
-  private credentials: grpc.ChannelCredentials;
-  private metadata: grpc.Metadata;
+  private readonly credentials: grpc.ChannelCredentials;
+  private readonly metadata: grpc.Metadata;
 
   constructor(config: FlightClientConfig) {
     validateConfig(config);
@@ -111,7 +111,7 @@ export class FlightClient {
     });
   }
 
-  async doGet(ticket: Ticket): Promise<QueryResult> {
+  async doGet(ticket: Ticket): Promise<Table> {
     if (!this.client) {
       await this.connect();
     }
@@ -162,42 +162,14 @@ export class FlightClient {
    * According to Apache Arrow Flight spec, FlightData contains FlatBuffer messages
    * that need to be converted to proper Arrow IPC format for parsing.
    */
-  private processFlightDataMessages(messages: Array<{header?: Uint8Array, body?: Uint8Array}>): QueryResult {
+  private processFlightDataMessages(messages: Array<{header?: Uint8Array, body?: Uint8Array}>): Table {
     if (messages.length === 0) {
-      return {
-        schema: null,
-        batches: [],
-        recordCount: 0
-      };
+      return new Table();
     }
 
     const ipcParts = this.convertFlightDataToIPC(messages);
-    const ipcStream = this.combineIPCParts(ipcParts);
 
-    let schema: Schema | null = null;
-    const batches: any[] = [];
-
-    // Try parsing with tableFromIPC first
-    try {
-      const table = tableFromIPC(ipcStream);
-      schema = table.schema;
-      batches.push(table);
-    } catch (tableError) {
-      // Fallback: try RecordBatchStreamReader
-      const reader = RecordBatchStreamReader.from(ipcStream);
-      for (const batch of reader) {
-        if (!schema) {
-          schema = batch.schema;
-        }
-        batches.push(batch);
-      }
-    }
-
-    return {
-      schema,
-      batches,
-      recordCount: batches.reduce((total, batch) => total + batch.numRows, 0)
-    };
+    return tableFromIPC(ipcParts);
   }
 
   /**
@@ -269,22 +241,6 @@ export class FlightClient {
     const view = new DataView(buffer.buffer, offset, 4);
     view.setUint32(0, value, true); // little endian
     return offset + 4;
-  }
-
-  /**
-   * Combines multiple IPC parts into a single stream.
-   */
-  private combineIPCParts(parts: Uint8Array[]): Uint8Array {
-    const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
-    const stream = new Uint8Array(totalLength);
-
-    let offset = 0;
-    for (const part of parts) {
-      stream.set(part, offset);
-      offset += part.length;
-    }
-
-    return stream;
   }
 
   async doPut(stream: AsyncIterable<FlightData>): Promise<void> {
