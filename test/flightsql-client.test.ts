@@ -20,8 +20,7 @@ describe('FlightSQLClient', () => {
         host: 'localhost',
         port: 4317,
         plaintext: true,
-        username: 'test',
-        password: 'test'
+        token: 'test'
       };
 
       const client = new FlightSQLClient(config);

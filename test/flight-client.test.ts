@@ -59,8 +59,7 @@ describe('FlightClient', () => {
         host: 'localhost',
         port: 4317,
         plaintext: true,
-        username: 'test',
-        password: 'secret'
+        token: 'test'
       };
 
       const client = new FlightClient(config);
@@ -201,8 +200,7 @@ describe('FlightClient', () => {
         host: 'localhost',
         port: 4317,
         plaintext: true,
-        username: 'invalid',
-        password: 'invalid'
+        token: 'invalid'
       });
 
       expect(client).toBeInstanceOf(FlightClient);

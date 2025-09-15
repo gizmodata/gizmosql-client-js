@@ -2,8 +2,7 @@ export interface FlightClientConfig {
   host: string;
   port: number;
   plaintext?: boolean;
-  username?: string;
-  password?: string;
+  token?: string;
 }
 
 export type FlightSQLClientConfig = FlightClientConfig;

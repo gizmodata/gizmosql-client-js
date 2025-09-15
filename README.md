@@ -17,8 +17,7 @@ const client = new FlightSQLClient({
   host: "localhost",
   port: 4317,
   plaintext: true,
-  username: "your-username",
-  password: "your-password",
+  token: "your-bearer-token",
 });
 
 // This 'table' has type Arrow.dom.Table

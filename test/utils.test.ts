@@ -1,6 +1,5 @@
 import {
   createConnectionString,
-  createCredentialsMetadata,
   parseErrorFromGrpc,
   validateConfig
 } from '../src/utils';
@@ -63,47 +62,6 @@ describe('Utils', () => {
     it('should handle different hosts and ports', () => {
       expect(createConnectionString('example.com', 8080, true)).toBe('http://example.com:8080');
       expect(createConnectionString('127.0.0.1', 443, false)).toBe('https://127.0.0.1:443');
-    });
-  });
-
-  describe('createCredentialsMetadata', () => {
-    it('should return empty object for no credentials', () => {
-      const metadata = createCredentialsMetadata();
-      expect(metadata).toEqual({});
-    });
-
-    it('should return empty object for undefined credentials', () => {
-      const metadata = createCredentialsMetadata();
-      expect(metadata).toEqual({});
-    });
-
-    it('should return empty object for missing username', () => {
-      const metadata = createCredentialsMetadata(undefined, 'password');
-      expect(metadata).toEqual({});
-    });
-
-    it('should return empty object for missing password', () => {
-      const metadata = createCredentialsMetadata('user');
-      expect(metadata).toEqual({});
-
-      const metadata2 = createCredentialsMetadata('user');
-      expect(metadata2).toEqual({});
-    });
-
-    it('should create basic auth header', () => {
-      const metadata = createCredentialsMetadata('user', 'pass');
-      expect(metadata).toHaveProperty('authorization');
-      expect(metadata.authorization).toMatch(/^Basic /);
-
-      // Verify base64 encoding
-      const expectedEncoded = Buffer.from('user:pass').toString('base64');
-      expect(metadata.authorization).toBe(`Basic ${expectedEncoded}`);
-    });
-
-    it('should handle special characters in credentials', () => {
-      const metadata = createCredentialsMetadata('user@domain.com', 'p@ssw0rd!');
-      expect(metadata).toHaveProperty('authorization');
-      expect(metadata.authorization).toMatch(/^Basic /);
     });
   });
 

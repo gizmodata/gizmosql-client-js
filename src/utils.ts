@@ -14,17 +14,6 @@ export function validateConfig(config: { host: string; port: number }): void {
   }
 }
 
-export function createCredentialsMetadata(username?: string, password?: string): any {
-  if (!username || !password) {
-    return {};
-  }
-
-  const credentials = Buffer.from(`${username}:${password}`).toString('base64');
-  return {
-    authorization: `Basic ${credentials}`
-  };
-}
-
 export function parseErrorFromGrpc(error: any): FlightError {
   if (error.code === 16) { // UNAUTHENTICATED
     return new FlightError('Authentication failed', 'UNAUTHENTICATED');

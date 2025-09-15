@@ -15,7 +15,7 @@ import {
 } from './generated/proto/Flight_pb';
 import { FlightClientConfig } from './types';
 import { ConnectionError, AuthenticationError, FlightError } from './errors';
-import { validateConfig, createCredentialsMetadata, parseErrorFromGrpc } from './utils';
+import { validateConfig, parseErrorFromGrpc } from './utils';
 
 export class FlightClient {
   private client: FlightServiceClient | null = null;
@@ -38,10 +38,8 @@ export class FlightClient {
 
   private createMetadata(): grpc.Metadata {
     const metadata = new grpc.Metadata();
-    const authMetadata = createCredentialsMetadata(this.config.username, this.config.password);
-
-    for (const [key, value] of Object.entries(authMetadata)) {
-      metadata.add(key, value as string);
+    if (this.config.token) {
+      metadata.add("authorization", `Bearer ${this.config.token}`)
     }
 
     return metadata;
@@ -64,7 +62,7 @@ export class FlightClient {
 
       this.client = new FlightServiceClient(address, this.credentials, options);
 
-      if (this.config.username && this.config.password) {
+      if (this.config.token) {
         await this.authenticate();
       }
     } catch (error) {
