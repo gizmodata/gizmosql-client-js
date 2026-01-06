@@ -187,10 +187,7 @@ export class FlightSQLClient extends FlightClient {
     try {
       const command = new CommandGetCatalogs();
 
-      const descriptor = new FlightDescriptor();
-      descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-      descriptor.setCmd(command.serializeBinary());
-
+      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_CATALOGS);
       const flightInfo = await this.getFlightInfo(descriptor);
       const endpoints = flightInfo.getEndpointList();
 
@@ -218,10 +215,7 @@ export class FlightSQLClient extends FlightClient {
         command.setCatalog(catalog);
       }
 
-      const descriptor = new FlightDescriptor();
-      descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-      descriptor.setCmd(command.serializeBinary());
-
+      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_DB_SCHEMAS);
       const flightInfo = await this.getFlightInfo(descriptor);
       const endpoints = flightInfo.getEndpointList();
 
@@ -288,10 +282,7 @@ export class FlightSQLClient extends FlightClient {
     try {
       const command = new CommandGetTableTypes();
 
-      const descriptor = new FlightDescriptor();
-      descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-      descriptor.setCmd(command.serializeBinary());
-
+      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_TABLE_TYPES);
       const flightInfo = await this.getFlightInfo(descriptor);
       const endpoints = flightInfo.getEndpointList();
 

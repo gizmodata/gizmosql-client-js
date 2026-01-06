@@ -31,9 +31,17 @@ export class FlightClient {
   }
 
   private createCredentials(): grpc.ChannelCredentials {
-    return this.config.plaintext
-      ? grpc.credentials.createInsecure()
-      : grpc.credentials.createSsl();
+    if (this.config.plaintext) {
+      return grpc.credentials.createInsecure();
+    }
+
+    if (this.config.tlsSkipVerify) {
+      return grpc.credentials.createSsl(null, null, null, {
+        rejectUnauthorized: false
+      });
+    }
+
+    return grpc.credentials.createSsl();
   }
 
   private createMetadata(): grpc.Metadata {
@@ -84,7 +92,18 @@ export class FlightClient {
       const handshakeRequest = new HandshakeRequest();
       call.write(handshakeRequest);
 
+      call.on('metadata', (metadata: grpc.Metadata) => {
+        const authHeader = metadata.get('authorization');
+        if (authHeader && authHeader.length > 0) {
+          this.metadata.set('authorization', authHeader[0] as string);
+        }
+      });
+
       call.on('data', () => {
+        resolve();
+      });
+
+      call.on('end', () => {
         resolve();
       });
 

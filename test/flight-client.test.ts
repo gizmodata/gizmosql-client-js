@@ -54,6 +54,31 @@ describe('FlightClient', () => {
       expect(credentials).toBeDefined();
     });
 
+    it('should create credentials with tlsSkipVerify', () => {
+      const config: FlightClientConfig = {
+        host: 'localhost',
+        port: 4317,
+        tlsSkipVerify: true
+      };
+
+      const client = new FlightClient(config);
+      const credentials = (client as any).credentials;
+      expect(credentials).toBeDefined();
+    });
+
+    it('should use plaintext over tlsSkipVerify when both set', () => {
+      const config: FlightClientConfig = {
+        host: 'localhost',
+        port: 4317,
+        plaintext: true,
+        tlsSkipVerify: true
+      };
+
+      const client = new FlightClient(config);
+      const credentials = (client as any).credentials;
+      expect(credentials).toBeDefined();
+    });
+
     it('should create metadata with authentication', () => {
       const config: FlightClientConfig = {
         host: 'localhost',

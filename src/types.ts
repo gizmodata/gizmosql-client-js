@@ -2,6 +2,7 @@ export interface FlightClientConfig {
   host: string;
   port: number;
   plaintext?: boolean;
+  tlsSkipVerify?: boolean;
   username?: string;
   password?: string;
   token?: string;
