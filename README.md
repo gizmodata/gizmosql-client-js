@@ -1,5 +1,8 @@
 # GizmoSQL Client for JavaScript/TypeScript
 
+[![GitHub](https://img.shields.io/badge/GitHub-gizmodata%2Fgizmosql--client--js-blue.svg?logo=Github)](https://github.com/gizmodata/gizmosql-client-js)
+[![npm](https://img.shields.io/badge/npm-@gizmodata%2Fgizmosql--client-red.svg?logo=npm)](https://www.npmjs.com/package/@gizmodata/gizmosql-client)
+
 A TypeScript/JavaScript client for [GizmoSQL](https://github.com/gizmodata/gizmosql) and Apache Arrow Flight SQL servers.
 
 ## Features
