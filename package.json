@@ -1,6 +1,6 @@
 {
   "name": "@gizmodata/gizmosql-client",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "A TypeScript/JavaScript client for GizmoSQL and Apache Arrow Flight SQL",
   "author": "GizmoData LLC",
   "license": "Apache-2.0",
