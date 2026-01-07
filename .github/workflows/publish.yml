@@ -14,32 +14,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js 22.x
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22.x
+          registry-url: "https://registry.npmjs.org"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Generate protobuf types
-        run: npm run proto:generate
+      - run: npm run proto:generate
 
-      - name: Run type check
-        run: npm run typecheck
+      - run: npm run typecheck
 
-      - name: Run lint
-        run: npm run lint:ci
+      - run: npm run lint:ci
 
-      - name: Run tests
-        run: npm test
+      - run: npm test
 
-      - name: Build
-        run: npm run build
+      - run: npm run build
 
-      - name: Create npm package tarball
-        run: npm pack
+      - run: npm pack
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -47,5 +40,4 @@ jobs:
           files: "*.tgz"
           generate_release_notes: true
 
-      - name: Publish to npm (trusted publishing)
-        run: npm publish --provenance --access public
+      - run: npm publish --access public
