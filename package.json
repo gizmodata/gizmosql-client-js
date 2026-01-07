@@ -1,15 +1,24 @@
 {
-  "name": "@firetiger-oss/flight-sql-client",
-  "version": "1.1.1",
-  "description": "A TypeScript/JavaScript client for Apache Arrow Flight and Flight SQL protocols",
-  "author": "Firetiger Inc",
+  "name": "@gizmodata/gizmosql-client",
+  "version": "1.2.0",
+  "description": "A TypeScript/JavaScript client for GizmoSQL and Apache Arrow Flight SQL",
+  "author": "GizmoData LLC",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gizmodata/gizmosql-client-js.git"
+  },
+  "homepage": "https://github.com/gizmodata/gizmosql-client-js#readme",
+  "bugs": {
+    "url": "https://github.com/gizmodata/gizmosql-client-js/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
     "dist/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "scripts": {
     "prebuild": "npm run clean && npm run proto:generate",
@@ -29,6 +38,8 @@
     "proto:generate": "grpc_tools_node_protoc --plugin=protoc-gen-ts=./node_modules/.bin/protoc-gen-ts --ts_out=grpc_js:./src/generated --js_out=import_style=commonjs,binary:./src/generated --grpc_out=grpc_js:./src/generated proto/*.proto"
   },
   "keywords": [
+    "gizmosql",
+    "gizmodata",
     "arrow",
     "flight",
     "flightsql",
@@ -36,7 +47,8 @@
     "grpc",
     "sql",
     "database",
-    "analytics"
+    "analytics",
+    "duckdb"
   ],
   "dependencies": {
     "@grpc/grpc-js": "^1.13.4",
