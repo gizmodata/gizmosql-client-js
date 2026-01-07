@@ -49,4 +49,4 @@ jobs:
           generate_release_notes: true
 
       - name: Publish to npm (trusted publishing)
-        run: npm publish --access public
+        run: npm publish --provenance --access public
