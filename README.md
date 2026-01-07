@@ -189,7 +189,7 @@ console.log(table.schema.fields);
 
 ## Requirements
 
-- Node.js >= 20.0.0
+- Node.js >= 20.0.0 (browser environments are not supported)
 
 ## License
 
