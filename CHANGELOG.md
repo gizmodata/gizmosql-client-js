@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-02-11
+
+### Added
+- `getSqlInfo()` method on `FlightSQLClient` for querying Flight SQL metadata (server name, capabilities, custom GizmoSQL instrumentation info)
+- `SqlInfoValue` type and `GIZMOSQL_SQL_INFO` constants for instrumentation metadata discovery (IDs 10000-10002)
+
 ## [1.3.0] - 2026-02-11
 
 ### Added

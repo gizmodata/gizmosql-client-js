@@ -34,6 +34,14 @@ export interface DatabaseMetadata {
   }>;
 }
 
+export type SqlInfoValue = string | boolean | number | bigint | string[] | null;
+
+export const GIZMOSQL_SQL_INFO = {
+  INSTRUMENTATION_ENABLED: 10000,
+  INSTRUMENTATION_CATALOG: 10001,
+  INSTRUMENTATION_SCHEMA: 10002,
+} as const;
+
 export interface TableMetadata {
   primaryKeys: Array<{
     catalogName: string;

@@ -8,13 +8,14 @@ import {
   CommandGetDbSchemas,
   CommandGetImportedKeys,
   CommandGetPrimaryKeys,
+  CommandGetSqlInfo,
   CommandGetTables,
   CommandGetTableTypes,
   CommandPreparedStatementQuery,
   CommandStatementQuery
 } from './generated/proto/FlightSql_pb';
 import {Any} from 'google-protobuf/google/protobuf/any_pb';
-import {FlightSQLClientConfig, PreparedStatement, TableMetadata} from './types';
+import {FlightSQLClientConfig, PreparedStatement, SqlInfoValue, TableMetadata} from './types';
 import {FlightError, FlightSQLError} from './errors';
 
 /**
@@ -26,6 +27,7 @@ export class FlightSQLClient extends FlightClient {
   private static readonly TYPE_URLS = {
     COMMAND_STATEMENT_QUERY: 'type.googleapis.com/arrow.flight.protocol.sql.CommandStatementQuery',
     COMMAND_PREPARED_STATEMENT_QUERY: 'type.googleapis.com/arrow.flight.protocol.sql.CommandPreparedStatementQuery',
+    COMMAND_GET_SQL_INFO: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetSqlInfo',
     COMMAND_GET_CATALOGS: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetCatalogs',
     COMMAND_GET_DB_SCHEMAS: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetDbSchemas',
     COMMAND_GET_TABLES: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetTables',
@@ -181,6 +183,79 @@ export class FlightSQLClient extends FlightClient {
     } catch (error) {
       throw new FlightSQLError(`Failed to close prepared statement: ${error}`);
     }
+  }
+
+  /**
+   * Gets SQL metadata information from the server.
+   * Returns a Map of SqlInfo ID to value for each requested ID.
+   * @param infoIds - Array of SqlInfo IDs to request. If empty, returns all available info.
+   */
+  async getSqlInfo(infoIds: number[] = []): Promise<Map<number, SqlInfoValue>> {
+    try {
+      const command = new CommandGetSqlInfo();
+      if (infoIds.length > 0) {
+        command.setInfoList(infoIds);
+      }
+
+      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_SQL_INFO);
+      const flightInfo = await this.getFlightInfo(descriptor);
+      const endpoints = flightInfo.getEndpointList();
+
+      if (endpoints.length === 0) {
+        return new Map();
+      }
+
+      const ticket = endpoints[0].getTicket();
+      if (!ticket) {
+        return new Map();
+      }
+
+      const table = await this.doGet(ticket);
+      return this.parseSqlInfoTable(table);
+    } catch (error) {
+      if (error instanceof FlightError) {
+        throw error;
+      }
+      throw new FlightSQLError(`Failed to get SQL info: ${error}`);
+    }
+  }
+
+  /**
+   * Parses a SqlInfo response table into a Map of info_name -> value.
+   * The table schema is: info_name (uint32), value (dense_union).
+   * Dense union children: 0=string_value, 1=bool_value, 2=bigint_value,
+   * 3=int32_bitmask, 4=string_list, 5=int32_to_int32_list_map
+   */
+  private parseSqlInfoTable(table: Table): Map<number, SqlInfoValue> {
+    const result = new Map<number, SqlInfoValue>();
+    const infoNameVector = table.getChild('info_name');
+    const valueVector = table.getChild('value');
+
+    if (!infoNameVector || !valueVector) {
+      return result;
+    }
+
+    for (let i = 0; i < table.numRows; i++) {
+      const infoName = infoNameVector.get(i) as number;
+      const value = valueVector.get(i);
+
+      // The dense union's .get() returns the unwrapped value for primitive types
+      // For strings it returns a string, for bools a boolean, for ints a number/bigint
+      if (value === null || value === undefined) {
+        result.set(infoName, null);
+      } else if (typeof value === 'string' || typeof value === 'boolean' ||
+                 typeof value === 'number' || typeof value === 'bigint') {
+        result.set(infoName, value);
+      } else if (Array.isArray(value)) {
+        // string_list: array of strings
+        result.set(infoName, value.map(String));
+      } else {
+        // int32_to_int32_list_map or other complex types - convert to string representation
+        result.set(infoName, String(value));
+      }
+    }
+
+    return result;
   }
 
   async getCatalogs(): Promise<string[]> {
