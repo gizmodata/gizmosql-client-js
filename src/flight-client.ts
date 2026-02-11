@@ -58,20 +58,7 @@ export class FlightClient {
 
   async connect(): Promise<void> {
     try {
-      const address = `${this.config.host}:${this.config.port}`;
-
-      // Configure gRPC options for large message handling
-      const options = {
-        'grpc.max_receive_message_length': 100 * 1024 * 1024, // 100MB
-        'grpc.max_send_message_length': 100 * 1024 * 1024,    // 100MB
-        'grpc.keepalive_time_ms': 30000,
-        'grpc.keepalive_timeout_ms': 5000,
-        'grpc.keepalive_permit_without_calls': 1,
-        'grpc.http2.max_pings_without_data': 0,
-        'grpc.http2.min_ping_interval_without_data_ms': 300000,
-      };
-
-      this.client = new FlightServiceClient(address, this.credentials, options);
+      this.ensureClient();
 
       if (this.config.token || (this.config.username && this.config.password)) {
         await this.authenticate();
@@ -79,6 +66,25 @@ export class FlightClient {
     } catch (error) {
       throw new ConnectionError(`Failed to connect to ${this.config.host}:${this.config.port}`, error as Error);
     }
+  }
+
+  private ensureClient(): void {
+    if (this.client) return;
+
+    const address = `${this.config.host}:${this.config.port}`;
+
+    // Configure gRPC options for large message handling
+    const options = {
+      'grpc.max_receive_message_length': 100 * 1024 * 1024, // 100MB
+      'grpc.max_send_message_length': 100 * 1024 * 1024,    // 100MB
+      'grpc.keepalive_time_ms': 30000,
+      'grpc.keepalive_timeout_ms': 5000,
+      'grpc.keepalive_permit_without_calls': 1,
+      'grpc.http2.max_pings_without_data': 0,
+      'grpc.http2.min_ping_interval_without_data_ms': 300000,
+    };
+
+    this.client = new FlightServiceClient(address, this.credentials, options);
   }
 
   private async authenticate(): Promise<void> {
@@ -109,6 +115,52 @@ export class FlightClient {
 
       call.on('error', (error: any) => {
         reject(new AuthenticationError(parseErrorFromGrpc(error).message));
+      });
+
+      call.end();
+    });
+  }
+
+  /**
+   * Performs an OAuth discovery handshake with the server.
+   * Sends username="__discover__" via Basic Auth; the server responds
+   * with the OAuth URL in the "x-gizmosql-oauth-url" gRPC response header.
+   *
+   * @returns The OAuth base URL (e.g., "http://localhost:31339"), or null
+   *          if the server does not support OAuth discovery.
+   */
+  async discoverOAuthUrl(): Promise<string | null> {
+    this.ensureClient();
+
+    const discoveryMetadata = new grpc.Metadata();
+    const credential = Buffer.from('__discover__:').toString('base64');
+    discoveryMetadata.add('authorization', `Basic ${credential}`);
+
+    return new Promise((resolve) => {
+      const call = this.client!.handshake(discoveryMetadata);
+      const handshakeRequest = new HandshakeRequest();
+      call.write(handshakeRequest);
+
+      let oauthUrl: string | null = null;
+
+      call.on('metadata', (metadata: grpc.Metadata) => {
+        const urlHeader = metadata.get('x-gizmosql-oauth-url');
+        if (urlHeader && urlHeader.length > 0) {
+          oauthUrl = urlHeader[0] as string;
+        }
+      });
+
+      call.on('data', () => {
+        // Handshake response received
+      });
+
+      call.on('end', () => {
+        resolve(oauthUrl);
+      });
+
+      call.on('error', () => {
+        // Server doesn't support OAuth discovery — return null
+        resolve(null);
       });
 
       call.end();

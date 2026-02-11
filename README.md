@@ -11,6 +11,7 @@ A TypeScript/JavaScript client for [GizmoSQL](https://github.com/gizmodata/gizmo
 - TLS with certificate verification skip option for self-signed certificates
 - Basic authentication (username/password)
 - Bearer token authentication
+- OAuth/SSO URL discovery via Flight handshake
 - Query execution with Apache Arrow table results
 - Database metadata operations (catalogs, schemas, tables)
 - Prepared statements support
@@ -69,6 +70,52 @@ const client = new FlightSQLClient({
   tlsSkipVerify: true,
   token: "your-bearer-token",
 });
+```
+
+### OAuth/SSO URL Discovery
+
+If the GizmoSQL server has OAuth/SSO configured, you can discover the OAuth URL via the Flight handshake protocol:
+
+```typescript
+import { FlightSQLClient } from "@gizmodata/gizmosql-client";
+
+const client = new FlightSQLClient({
+  host: "localhost",
+  port: 31337,
+  tlsSkipVerify: true,
+});
+
+// Discover the OAuth URL (no credentials needed)
+const oauthUrl = await client.discoverOAuthUrl();
+
+if (oauthUrl) {
+  console.log(`OAuth server URL: ${oauthUrl}`);
+  // Use oauthUrl to initiate OAuth flow:
+  //   GET ${oauthUrl}/oauth/initiate → { session_uuid, auth_url }
+  //   Direct user to auth_url for IdP login
+  //   Poll GET ${oauthUrl}/oauth/token/${session_uuid} for the token
+  //   Connect with username="token", password=<identity_token>
+} else {
+  console.log("Server does not have OAuth configured");
+}
+
+await client.close();
+```
+
+### Connecting with an OAuth/SSO Token
+
+After completing the OAuth flow, connect using the identity token via Basic Auth:
+
+```typescript
+const client = new FlightSQLClient({
+  host: "localhost",
+  port: 31337,
+  tlsSkipVerify: true,
+  username: "token",
+  password: identityToken,  // JWT from the OAuth flow
+});
+
+const table = await client.execute("SELECT * FROM my_table LIMIT 10");
 ```
 
 ### Plaintext Connection (Development Only)
@@ -144,6 +191,15 @@ const tables = await client.getTables(
 
 // Get table types
 const tableTypes = await client.getTableTypes();
+```
+
+### OAuth/SSO Discovery
+
+```typescript
+// Discover OAuth URL from server (no credentials required)
+const oauthUrl = await client.discoverOAuthUrl();
+// Returns the OAuth base URL (e.g., "http://localhost:31339"), or null
+// if the server does not have OAuth configured.
 ```
 
 ### Prepared Statements
