@@ -11,7 +11,8 @@ import {
   ActionType,
   Result,
   Criteria,
-  Empty
+  Empty,
+  CloseSessionRequest
 } from './generated/proto/Flight_pb';
 import { FlightClientConfig } from './types';
 import { ConnectionError, AuthenticationError, FlightError } from './errors';
@@ -441,6 +442,16 @@ export class FlightClient {
 
   async close(): Promise<void> {
     if (this.client) {
+      // Send CloseSession RPC to notify the server before closing the gRPC channel
+      try {
+        const request = new CloseSessionRequest();
+        const action = new Action();
+        action.setType('CloseSession');
+        action.setBody(request.serializeBinary());
+        await this.doAction(action);
+      } catch {
+        // Best-effort; ignore errors on disconnect
+      }
       this.client.close();
       this.client = null;
     }

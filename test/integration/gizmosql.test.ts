@@ -247,4 +247,38 @@ describeIfDocker('GizmoSQL Integration Tests', () => {
       }
     });
   });
+
+  describe('Session Lifecycle', () => {
+    it('should send CloseSession RPC when closing the client', async () => {
+      // Count existing session close messages in server logs
+      const logsBefore = execSync(`docker logs ${CONTAINER_NAME} 2>&1`, { encoding: 'utf-8' });
+      const countBefore = (logsBefore.match(/Client session was successfully closed/g) || []).length;
+
+      // Create a new client, establish a session, then close it
+      const sessionClient = new FlightSQLClient(config);
+      await sessionClient.execute('SELECT 1');
+      await sessionClient.close();
+
+      // Allow the server a moment to flush the log
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Verify the server logged a successful session close
+      const logsAfter = execSync(`docker logs ${CONTAINER_NAME} 2>&1`, { encoding: 'utf-8' });
+      const countAfter = (logsAfter.match(/Client session was successfully closed/g) || []).length;
+
+      expect(countAfter).toBeGreaterThan(countBefore);
+    });
+
+    it('should not throw when closing a client that was never connected', async () => {
+      const unusedClient = new FlightSQLClient(config);
+      await expect(unusedClient.close()).resolves.toBeUndefined();
+    });
+
+    it('should not throw when closing a client twice', async () => {
+      const doubleCloseClient = new FlightSQLClient(config);
+      await doubleCloseClient.execute('SELECT 1');
+      await doubleCloseClient.close();
+      await expect(doubleCloseClient.close()).resolves.toBeUndefined();
+    });
+  });
 });

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-03-10
+
+### Fixed
+- Always send `CloseSession` RPC when closing the client connection. Previously, `close()` only closed the gRPC channel without notifying the server, leaving server-side sessions open indefinitely.
+
 ## [1.4.0] - 2026-02-11
 
 ### Added
