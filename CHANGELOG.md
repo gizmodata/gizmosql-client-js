@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-03-10
+
+### Fixed
+- Fix `close()` sending CloseSession to wrong session in bundled environments (e.g., `@yao-pkg/pkg`). The `doAction()` wrapper's auto-reconnect logic could create a new session instead of closing the existing one. Now calls the gRPC client directly.
+- Log CloseSession RPC failures with `console.warn` instead of silently swallowing all errors.
+
 ## [1.4.1] - 2026-03-10
 
 ### Fixed

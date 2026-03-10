@@ -442,15 +442,25 @@ export class FlightClient {
 
   async close(): Promise<void> {
     if (this.client) {
-      // Send CloseSession RPC to notify the server before closing the gRPC channel
+      // Send CloseSession RPC to notify the server before closing the gRPC channel.
+      // Call the gRPC client directly (not this.doAction()) to avoid the auto-reconnect
+      // behavior that can create a new session instead of closing the existing one.
       try {
         const request = new CloseSessionRequest();
         const action = new Action();
         action.setType('CloseSession');
         action.setBody(request.serializeBinary());
-        await this.doAction(action);
-      } catch {
-        // Best-effort; ignore errors on disconnect
+
+        await new Promise<void>((resolve, reject) => {
+          const call = this.client!.doAction(action, this.metadata);
+          call.on('data', () => { /* consume response */ });
+          call.on('error', (error: any) => reject(error));
+          call.on('end', () => resolve());
+        });
+      } catch (error) {
+        // Best-effort but log so failures aren't invisible
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`CloseSession RPC failed (best-effort): ${message}`);
       }
       this.client.close();
       this.client = null;
