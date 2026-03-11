@@ -15,12 +15,17 @@ export function validateConfig(config: { host: string; port: number }): void {
 }
 
 export function parseErrorFromGrpc(error: any): FlightError {
+  // gRPC errors have a `details` field with the server's actual error message,
+  // and a `message` field formatted as "CODE STATUS_TEXT: details".
+  // Prefer `details` for a cleaner message; fall back to `message`.
+  const detail: string = error.details || error.message || 'Unknown error';
+
   if (error.code === 16) { // UNAUTHENTICATED
-    return new FlightError('Authentication failed', 'UNAUTHENTICATED');
+    return new FlightError(detail, 'UNAUTHENTICATED');
   }
   if (error.code === 14) { // UNAVAILABLE
-    return new FlightError('Service unavailable', 'UNAVAILABLE');
+    return new FlightError(detail, 'UNAVAILABLE');
   }
 
-  return new FlightError(error.message || 'Unknown error', error.code?.toString());
+  return new FlightError(detail, error.code?.toString());
 }

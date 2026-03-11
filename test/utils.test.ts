@@ -67,20 +67,29 @@ describe('Utils', () => {
 
   describe('parseErrorFromGrpc', () => {
     it('should handle authentication errors', () => {
+      const grpcError = { code: 16, message: '16 UNAUTHENTICATED: Invalid credentials', details: 'Invalid credentials' };
+      const flightError = parseErrorFromGrpc(grpcError);
+
+      expect(flightError).toBeInstanceOf(FlightError);
+      expect(flightError.message).toBe('Invalid credentials');
+      expect(flightError.code).toBe('UNAUTHENTICATED');
+    });
+
+    it('should fall back to message when details is absent', () => {
       const grpcError = { code: 16, message: 'Unauthenticated' };
       const flightError = parseErrorFromGrpc(grpcError);
 
       expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Authentication failed');
+      expect(flightError.message).toBe('Unauthenticated');
       expect(flightError.code).toBe('UNAUTHENTICATED');
     });
 
     it('should handle unavailable errors', () => {
-      const grpcError = { code: 14, message: 'Unavailable' };
+      const grpcError = { code: 14, message: '14 UNAVAILABLE: Connection refused', details: 'Connection refused' };
       const flightError = parseErrorFromGrpc(grpcError);
 
       expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Service unavailable');
+      expect(flightError.message).toBe('Connection refused');
       expect(flightError.code).toBe('UNAVAILABLE');
     });
 

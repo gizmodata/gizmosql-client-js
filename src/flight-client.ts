@@ -65,7 +65,9 @@ export class FlightClient {
         await this.authenticate();
       }
     } catch (error) {
-      throw new ConnectionError(`Failed to connect to ${this.config.host}:${this.config.port}`, error as Error);
+      // Include both the target (host:port) and the underlying reason
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new ConnectionError(`Failed to connect to ${this.config.host}:${this.config.port}: ${detail}`, error as Error);
     }
   }
 

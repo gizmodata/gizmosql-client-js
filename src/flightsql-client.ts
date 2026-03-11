@@ -16,7 +16,7 @@ import {
 } from './generated/proto/FlightSql_pb';
 import {Any} from 'google-protobuf/google/protobuf/any_pb';
 import {FlightSQLClientConfig, PreparedStatement, SqlInfoValue, TableMetadata} from './types';
-import {FlightError, FlightSQLError} from './errors';
+import {FlightSQLError} from './errors';
 
 /**
  * FlightSQL client implementation extending the base Flight client.
@@ -67,10 +67,8 @@ export class FlightSQLClient extends FlightClient {
 
       return await this.doGet(ticket);
     } catch (error) {
-      if (error instanceof FlightError) {
-        throw error;
-      }
-      throw new FlightSQLError(`Failed to execute query: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to execute query: ${detail}`);
     }
   }
 
@@ -114,7 +112,8 @@ export class FlightSQLClient extends FlightClient {
 
       return await this.getSchema(descriptor);
     } catch (error) {
-      throw new FlightSQLError(`Failed to get query schema: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get query schema: ${detail}`);
     }
   }
 
@@ -139,7 +138,8 @@ export class FlightSQLClient extends FlightClient {
         resultSchema: undefined
       };
     } catch (error) {
-      throw new FlightSQLError(`Failed to prepare statement: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to prepare statement: ${detail}`);
     }
   }
 
@@ -167,7 +167,8 @@ export class FlightSQLClient extends FlightClient {
       const table = await this.doGet(ticket);
       return table.toArray();
     } catch (error) {
-      throw new FlightSQLError(`Failed to execute prepared statement: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to execute prepared statement: ${detail}`);
     }
   }
 
@@ -181,7 +182,8 @@ export class FlightSQLClient extends FlightClient {
 
       await this.doAction(action as any);
     } catch (error) {
-      throw new FlightSQLError(`Failed to close prepared statement: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to close prepared statement: ${detail}`);
     }
   }
 
@@ -213,10 +215,8 @@ export class FlightSQLClient extends FlightClient {
       const table = await this.doGet(ticket);
       return this.parseSqlInfoTable(table);
     } catch (error) {
-      if (error instanceof FlightError) {
-        throw error;
-      }
-      throw new FlightSQLError(`Failed to get SQL info: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get SQL info: ${detail}`);
     }
   }
 
@@ -279,7 +279,8 @@ export class FlightSQLClient extends FlightClient {
       const rows = table.toArray();
       return rows.map(row => row.catalog_name);
     } catch (error) {
-      throw new FlightSQLError(`Failed to get catalogs: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get catalogs: ${detail}`);
     }
   }
 
@@ -310,7 +311,8 @@ export class FlightSQLClient extends FlightClient {
         schema: row.db_schema_name
       }));
     } catch (error) {
-      throw new FlightSQLError(`Failed to get schemas: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get schemas: ${detail}`);
     }
   }
 
@@ -349,7 +351,8 @@ export class FlightSQLClient extends FlightClient {
         tableType: row.table_type
       }));
     } catch (error) {
-      throw new FlightSQLError(`Failed to get tables: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get tables: ${detail}`);
     }
   }
 
@@ -374,7 +377,8 @@ export class FlightSQLClient extends FlightClient {
       const rows = table.toArray();
       return rows.map(row => row.table_type);
     } catch (error) {
-      throw new FlightSQLError(`Failed to get table types: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get table types: ${detail}`);
     }
   }
 
@@ -411,7 +415,8 @@ export class FlightSQLClient extends FlightClient {
         keySequence: row.key_sequence
       }));
     } catch (error) {
-      throw new FlightSQLError(`Failed to get primary keys: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get primary keys: ${detail}`);
     }
   }
 
@@ -451,7 +456,8 @@ export class FlightSQLClient extends FlightClient {
         fkColumnName: row.fk_column_name
       }));
     } catch (error) {
-      throw new FlightSQLError(`Failed to get foreign keys: ${error}`);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new FlightSQLError(`Failed to get foreign keys: ${detail}`);
     }
   }
 }

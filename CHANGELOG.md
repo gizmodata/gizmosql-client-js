@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `parseErrorFromGrpc` now uses the gRPC `details` field (the server's actual error message) instead of hardcoded generic messages like "Authentication failed" or "Service unavailable"
+- `FlightClient.connect()` now preserves specific error types (e.g., `AuthenticationError`) instead of wrapping them in a generic `ConnectionError` that hides the detail
+- All `FlightSQLClient` methods (`getCatalogs`, `getSchemas`, `getTables`, `execute`, etc.) now include the underlying error detail in their error messages instead of just the error class name
+
 ## [1.4.2] - 2026-03-10
 
 ### Fixed
