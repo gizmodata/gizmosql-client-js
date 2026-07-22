@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Prepared statements were completely broken** ([#1](https://github.com/gizmodata/gizmosql-client-js/issues/1)). Three bugs, found via smoke-testing against GizmoSQL server v1.34.0:
+  - `prepare()` and `closePrepared()` built a `FlightDescriptor` instead of a Flight `Action` (and never attached the request payload), failing client-side with `Expected argument of type arrow.flight.protocol.Action` before any bytes reached the server. They now send a proper `Action` (`CreatePreparedStatement` / `ClosePreparedStatement`) with the `Any`-packed request as the body, and the `as any` casts that hid the type error are gone.
+  - `prepare()` treated the raw DoAction result body as the statement handle; per the Flight SQL spec it is a `google.protobuf.Any` wrapping an `ActionCreatePreparedStatementResult`. The result is now unpacked properly, and `parameterSchema`/`resultSchema` are populated with the schemas' IPC bytes from the server (previously always `undefined`).
+  - `executePrepared()` sent the `CommandPreparedStatementQuery` without the `Any` wrapper (unlike every other command), which servers reject as an invalid request. It now uses the same `createCommandDescriptor` path as `execute()`.
+
+### Changed
+- Integration CI: the CloseSession log assertion now resolves the server container dynamically (GitHub Actions service containers have generated names), fixing the Test workflow that had been failing on main since March
+- CI workflows: bumped `actions/checkout` and `actions/setup-node` to v5 (Node 24 action runtime)
+- Refreshed dependencies within semver ranges (apache-arrow 21.2.0, @grpc/grpc-js 1.14.4, google-protobuf 4.0.2, jest 30.4.2, et al)
+
+## [1.4.3] - 2026-03-11
+
+### Fixed
 - `parseErrorFromGrpc` now uses the gRPC `details` field (the server's actual error message) instead of hardcoded generic messages like "Authentication failed" or "Service unavailable"
 - `FlightClient.connect()` now preserves specific error types (e.g., `AuthenticationError`) instead of wrapping them in a generic `ConnectionError` that hides the detail
 - All `FlightSQLClient` methods (`getCatalogs`, `getSchemas`, `getTables`, `execute`, etc.) now include the underlying error detail in their error messages instead of just the error class name

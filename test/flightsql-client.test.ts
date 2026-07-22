@@ -1,6 +1,9 @@
 import { FlightSQLClient } from '../src/flightsql-client';
 import { FlightSQLClientConfig } from '../src/types';
 import { FlightSQLError } from '../src/errors';
+import { Action } from '../src/generated/proto/Flight_pb';
+import { ActionCreatePreparedStatementResult } from '../src/generated/proto/FlightSql_pb';
+import { Any } from 'google-protobuf/google/protobuf/any_pb';
 
 describe('FlightSQLClient', () => {
   describe('constructor', () => {
@@ -92,9 +95,15 @@ describe('FlightSQLClient', () => {
 
     describe('prepared statements', () => {
       it('should create prepared statement structure', async () => {
-        // Mock the doAction method to simulate server response
-        jest.spyOn(client as any, 'doAction').mockResolvedValue([{
-          getBody_asU8: jest.fn().mockReturnValue(new Uint8Array([1, 2, 3, 4]))
+        // Mock the doAction method to simulate a spec-compliant server
+        // response: an Any-wrapped ActionCreatePreparedStatementResult.
+        const result = new ActionCreatePreparedStatementResult();
+        result.setPreparedStatementHandle(new Uint8Array([1, 2, 3, 4]));
+        const resultAny = new Any();
+        resultAny.setTypeUrl('type.googleapis.com/arrow.flight.protocol.sql.ActionCreatePreparedStatementResult');
+        resultAny.setValue(result.serializeBinary());
+        const doAction = jest.spyOn(client as any, 'doAction').mockResolvedValue([{
+          getBody_asU8: jest.fn().mockReturnValue(resultAny.serializeBinary())
         }]);
 
         const prepared = await client.prepare('SELECT * FROM table WHERE id = ?');
@@ -103,6 +112,15 @@ describe('FlightSQLClient', () => {
         expect(prepared).toHaveProperty('parameterSchema');
         expect(prepared).toHaveProperty('resultSchema');
         expect(prepared.handle).toBeInstanceOf(Uint8Array);
+        expect(Array.from(prepared.handle)).toEqual([1, 2, 3, 4]);
+
+        // The request must be a real Flight Action carrying the packed
+        // CreatePreparedStatement request (regression: a FlightDescriptor
+        // was previously sent, failing gRPC serialization client-side).
+        const sentAction = doAction.mock.calls[0][0] as Action;
+        expect(sentAction).toBeInstanceOf(Action);
+        expect(sentAction.getType()).toBe('CreatePreparedStatement');
+        expect(sentAction.getBody_asU8().length).toBeGreaterThan(0);
       });
 
       it('should handle prepare statement errors', async () => {
