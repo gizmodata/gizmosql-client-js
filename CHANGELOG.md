@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `executePrepared()` sent the `CommandPreparedStatementQuery` without the `Any` wrapper (unlike every other command), which servers reject as an invalid request. It now uses the same `createCommandDescriptor` path as `execute()`.
 
 ### Changed
+- Integration CI: the CloseSession log assertion now resolves the server container dynamically (GitHub Actions service containers have generated names), fixing the Test workflow that had been failing on main since March
 - CI workflows: bumped `actions/checkout` and `actions/setup-node` to v5 (Node 24 action runtime)
 - Refreshed dependencies within semver ranges (apache-arrow 21.2.0, @grpc/grpc-js 1.14.4, google-protobuf 4.0.2, jest 30.4.2, et al)
 
