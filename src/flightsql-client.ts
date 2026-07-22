@@ -1,9 +1,10 @@
 import {Schema, Table} from 'apache-arrow';
 import {FlightClient} from './flight-client';
-import {FlightDescriptor} from './generated/proto/Flight_pb';
+import {Action, FlightDescriptor} from './generated/proto/Flight_pb';
 import {
   ActionClosePreparedStatementRequest,
   ActionCreatePreparedStatementRequest,
+  ActionCreatePreparedStatementResult,
   CommandGetCatalogs,
   CommandGetDbSchemas,
   CommandGetImportedKeys,
@@ -122,20 +123,25 @@ export class FlightSQLClient extends FlightClient {
       const request = new ActionCreatePreparedStatementRequest();
       request.setQuery(query);
 
-      const action = new FlightDescriptor();
-      action.setType(FlightDescriptor.DescriptorType.CMD);
+      const action = new Action();
+      action.setType('CreatePreparedStatement');
+      action.setBody(this.packCommand(request, FlightSQLClient.TYPE_URLS.ACTION_CREATE_PREPARED_STATEMENT));
 
-      const results = await this.doAction(action as any);
+      const results = await this.doAction(action);
 
       if (results.length === 0) {
         throw new FlightSQLError('No results returned from prepare statement');
       }
 
-      const handle = results[0].getBody_asU8();
+      // The result body is a google.protobuf.Any wrapping an
+      // ActionCreatePreparedStatementResult (Flight SQL spec).
+      const resultAny = Any.deserializeBinary(results[0].getBody_asU8());
+      const result = ActionCreatePreparedStatementResult.deserializeBinary(resultAny.getValue_asU8());
+
       return {
-        handle,
-        parameterSchema: undefined,
-        resultSchema: undefined
+        handle: result.getPreparedStatementHandle_asU8(),
+        parameterSchema: result.getParameterSchema_asU8(),
+        resultSchema: result.getDatasetSchema_asU8()
       };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -148,9 +154,11 @@ export class FlightSQLClient extends FlightClient {
       const command = new CommandPreparedStatementQuery();
       command.setPreparedStatementHandle(prepared.handle);
 
-      const descriptor = new FlightDescriptor();
-      descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-      descriptor.setCmd(command.serializeBinary());
+      // The command must be Any-wrapped like every other Flight SQL command
+      // (regression: the raw command bytes were sent, which the server
+      // rejects as an invalid request).
+      const descriptor = this.createCommandDescriptor(
+        command, FlightSQLClient.TYPE_URLS.COMMAND_PREPARED_STATEMENT_QUERY);
 
       const flightInfo = await this.getFlightInfo(descriptor);
       const endpoints = flightInfo.getEndpointList();
@@ -177,10 +185,11 @@ export class FlightSQLClient extends FlightClient {
       const request = new ActionClosePreparedStatementRequest();
       request.setPreparedStatementHandle(prepared.handle);
 
-      const action = new FlightDescriptor();
-      action.setType(FlightDescriptor.DescriptorType.CMD);
+      const action = new Action();
+      action.setType('ClosePreparedStatement');
+      action.setBody(this.packCommand(request, FlightSQLClient.TYPE_URLS.ACTION_CLOSE_PREPARED_STATEMENT));
 
-      await this.doAction(action as any);
+      await this.doAction(action);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new FlightSQLError(`Failed to close prepared statement: ${detail}`);
