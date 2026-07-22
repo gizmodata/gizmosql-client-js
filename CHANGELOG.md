@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-07-22
+
 ### Fixed
 - **Prepared statements were completely broken** ([#1](https://github.com/gizmodata/gizmosql-client-js/issues/1)). Three bugs, found via smoke-testing against GizmoSQL server v1.34.0:
   - `prepare()` and `closePrepared()` built a `FlightDescriptor` instead of a Flight `Action` (and never attached the request payload), failing client-side with `Expected argument of type arrow.flight.protocol.Action` before any bytes reached the server. They now send a proper `Action` (`CreatePreparedStatement` / `ClosePreparedStatement`) with the `Any`-packed request as the body, and the `as any` casts that hid the type error are gone.
