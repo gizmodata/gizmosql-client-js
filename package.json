@@ -23,7 +23,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "prebuild": "npm run clean && npm run proto:generate",
+    "prebuild": "npm run clean",
     "build": "tsc -p tsconfig.json",
     "clean": "rimraf dist/",
     "postinstall": "node scripts/download-driver.cjs",
@@ -36,8 +36,7 @@
     "lint": "eslint src test --fix",
     "lint:ci": "eslint src test",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm test && npm run lint:ci",
-    "proto:generate": "grpc_tools_node_protoc --plugin=protoc-gen-ts=./node_modules/.bin/protoc-gen-ts --ts_out=grpc_js:./src/generated --js_out=import_style=commonjs,binary:./src/generated --grpc_out=grpc_js:./src/generated proto/*.proto"
+    "prepublishOnly": "npm run build && npm test && npm run lint:ci"
   },
   "keywords": [
     "gizmosql",

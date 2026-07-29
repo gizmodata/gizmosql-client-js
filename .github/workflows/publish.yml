@@ -22,7 +22,6 @@ jobs:
 
       - run: npm install
 
-      - run: npm run proto:generate
 
       - run: npm run typecheck
 
