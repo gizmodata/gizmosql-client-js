@@ -57,11 +57,11 @@ See `docs/go-driver-rewrite-plan.md` for design.
 
 ## Phase 3 — GizmoSQL-semantics tests + docs
 
-- [ ] Integration tests: DDL/DML immediate execution (no fetch),
+- [x] Integration tests: DDL/DML immediate execution (no fetch),
       RETURNING, gizmosql:// URI, OAuth option passthrough (mock-level)
-- [ ] README rewrite: 2.0 architecture (Go driver), Node 22+ note,
+- [x] README rewrite: 2.0 architecture (Go driver), Node 22+ note,
       migration notes (FlightClient removed, OAuth now in-driver)
-- [ ] CHANGELOG [Unreleased] complete enough to be the 2.0.0 release
+- [x] CHANGELOG [Unreleased] complete enough to be the 2.0.0 release
       notes
 
 ## Phase 4 — gizmosql-ui verification
