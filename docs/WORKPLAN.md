@@ -24,11 +24,13 @@ See `docs/go-driver-rewrite-plan.md` for design.
 
 ## Phase 1 — Scaffold + spike
 
-- [ ] Add `@apache-arrow/adbc-driver-manager` dependency; confirm the
-      repo's Node/engines story (driver manager needs Node 22+); spike
-      script proving: load `libadbc_driver_gizmosql` (from the local
-      gizmosql-adbc build or GitHub Release download), `SELECT 1`,
-      DDL/DML-without-fetch, RETURNING — against a live server
+- [x] Add `@apache-arrow/adbc-driver-manager` dependency (0.24.0);
+      engines raised to Node >=22; `scripts/spike-adbc.mjs` proves
+      SELECT / DDL-DML-without-fetch / RETURNING against a live server
+      via the local Go driver build (key API learning: driver options
+      go under `databaseOptions`, and AdbcConnection exposes query/
+      queryStream/ingest/getObjects/getInfo/prepared statements —
+      everything FlightSQLClient needs)
 - [ ] Driver library resolver (`src/driver-lib.ts`): env override →
       packaged/cache path → clear error; postinstall downloader with
       SHA-256 verification against the gizmosql-adbc v2.0.0 release

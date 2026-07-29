@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **2.0 groundwork**: added `@apache-arrow/adbc-driver-manager` — the
+  client is being rebased on the native Go GizmoSQL ADBC driver
+  ([gizmodata/gizmosql-adbc](https://github.com/gizmodata/gizmosql-adbc));
+  see `docs/go-driver-rewrite-plan.md`. `scripts/spike-adbc.mjs` proves
+  the architecture end to end from Node (SELECT round trip, DDL/DML
+  immediate execution without fetch, `INSERT ... RETURNING`
+  persistence) against a live GizmoSQL server. Node.js engines floor
+  raised to >=22 (NAPI driver-manager requirement — breaking for 2.0).
+
 ## [1.4.4] - 2026-07-22
 
 ### Fixed

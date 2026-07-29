@@ -51,6 +51,7 @@
     "duckdb"
   ],
   "dependencies": {
+    "@apache-arrow/adbc-driver-manager": "^0.24.0",
     "@grpc/grpc-js": "^1.13.4",
     "apache-arrow": "^21.0.0",
     "google-protobuf": "^4.0.0"
@@ -72,7 +73,7 @@
     "typescript-eslint": "^8.43.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "overrides": {
     "test-exclude": "^7.0.1"
