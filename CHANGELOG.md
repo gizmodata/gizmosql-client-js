@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Native driver resolver + postinstall downloader** (2.0 groundwork):
+  `resolveDriverLib()` in `src/driver-lib.ts` locates the native Go
+  GizmoSQL ADBC driver library — `GIZMOSQL_DRIVER_LIB` env override
+  first, then the package-local download cache (`drivers/<version>/`),
+  otherwise a clear error with remediation steps (re-run the download,
+  set the env var, or build from source). `scripts/download-driver.cjs`
+  (npm `postinstall`, Node stdlib only) fetches the platform's
+  `libadbc_driver_gizmosql` tarball from the gizmodata/gizmosql-adbc
+  GitHub release pinned in `driver-manifest.json`, verifies its SHA-256
+  against the manifest, and installs the library atomically; download
+  failures warn (with remediation) but never break `npm install`, and
+  `GIZMOSQL_DRIVER_SKIP_DOWNLOAD=1` skips it entirely. Supported
+  platforms: macOS arm64/x64, Linux x64/arm64, Windows x64/arm64.
+
 ### Changed
 - **2.0 groundwork**: added `@apache-arrow/adbc-driver-manager` — the
   client is being rebased on the native Go GizmoSQL ADBC driver

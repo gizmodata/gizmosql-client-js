@@ -9,6 +9,9 @@ dist/
 lib/
 build/
 
+# Downloaded native driver cache (scripts/download-driver.cjs)
+drivers/
+
 # Generated protocol buffer files
 src/generated/
 

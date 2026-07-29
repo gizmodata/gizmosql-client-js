@@ -31,10 +31,16 @@ See `docs/go-driver-rewrite-plan.md` for design.
       go under `databaseOptions`, and AdbcConnection exposes query/
       queryStream/ingest/getObjects/getInfo/prepared statements —
       everything FlightSQLClient needs)
-- [ ] Driver library resolver (`src/driver-lib.ts`): env override →
-      packaged/cache path → clear error; postinstall downloader with
-      SHA-256 verification against the gizmosql-adbc v2.0.0 release
-      assets
+- [x] Driver library resolver (`src/driver-lib.ts`): env override →
+      packaged/cache path → clear error; postinstall downloader
+      (`scripts/download-driver.cjs`, stdlib-only CJS) with SHA-256
+      verification against the gizmosql-adbc release assets pinned in
+      `driver-manifest.json` (pinned to v2.0.1); wired as npm
+      `postinstall` (failures warn + exit 0, never break install;
+      `GIZMOSQL_DRIVER_SKIP_DOWNLOAD=1` opt-out); unit tests for the
+      platform map + resolution order, and verified live: downloader
+      fetched the real release asset and `scripts/spike-adbc.mjs`
+      passed against a live GizmoSQL server using the downloaded lib
 
 ## Phase 2 — FlightSQLClient on ADBC
 
