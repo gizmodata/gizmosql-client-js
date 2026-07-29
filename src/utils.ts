@@ -1,4 +1,4 @@
-import { FlightError } from './errors';
+import { AuthenticationError, ConnectionError, FlightError } from './errors';
 
 export function createConnectionString(host: string, port: number, plaintext: boolean): string {
   const protocol = plaintext ? 'http' : 'https';
@@ -14,18 +14,30 @@ export function validateConfig(config: { host: string; port: number }): void {
   }
 }
 
-export function parseErrorFromGrpc(error: any): FlightError {
-  // gRPC errors have a `details` field with the server's actual error message,
-  // and a `message` field formatted as "CODE STATUS_TEXT: details".
-  // Prefer `details` for a cleaner message; fall back to `message`.
-  const detail: string = error.details || error.message || 'Unknown error';
-
-  if (error.code === 16) { // UNAUTHENTICATED
-    return new FlightError(detail, 'UNAUTHENTICATED');
+/**
+ * Maps an error from the ADBC driver manager onto this package's error
+ * hierarchy. AdbcError carries a string status `code` (e.g.
+ * 'Unauthenticated', 'IO', 'InvalidArguments') plus optional
+ * vendorCode/sqlState.
+ */
+export function toClientError(
+  error: unknown,
+  context: string,
+  fallback: new (message: string, ...rest: any[]) => FlightError = ConnectionError
+): FlightError {
+  if (error instanceof FlightError) {
+    return error;
   }
-  if (error.code === 14) { // UNAVAILABLE
-    return new FlightError(detail, 'UNAVAILABLE');
+  const anyErr = error as { message?: string; code?: string } | undefined;
+  const detail = anyErr?.message ?? String(error);
+  const code = anyErr?.code;
+  if (code === 'Unauthenticated' || code === 'Unauthorized') {
+    return new AuthenticationError(`${context}: ${detail}`);
   }
-
-  return new FlightError(detail, error.code?.toString());
+  if (code === 'IO' || code === 'Timeout' || code === 'Cancelled') {
+    return new ConnectionError(`${context}: ${detail}`);
+  }
+  const err = new fallback(`${context}: ${detail}`);
+  err.code = code;
+  return err;
 }

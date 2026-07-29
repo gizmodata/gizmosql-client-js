@@ -44,16 +44,16 @@ See `docs/go-driver-rewrite-plan.md` for design.
 
 ## Phase 2 — FlightSQLClient on ADBC
 
-- [ ] Config mapping: FlightSQLClientConfig → AdbcDatabase options
+- [x] Config mapping: FlightSQLClientConfig → AdbcDatabase options
       (host/port/tls → `gizmosql://` URI, credentials, OAuth fields →
       `adbc.gizmosql.*`)
-- [ ] `execute()` and prepared-statement methods on ADBC
-- [ ] Metadata methods (`getCatalogs`, `getSchemas`, `getTables`,
+- [x] `execute()` and prepared-statement methods on ADBC
+- [x] Metadata methods (`getCatalogs`, `getSchemas`, `getTables`,
       `getTableTypes`, `getSqlInfo`, `getPrimaryKeys`,
       `getForeignKeys`) on ADBC metadata APIs
-- [ ] Remove `flight-client.ts`, generated protos, grpc-js and
+- [x] Remove `flight-client.ts`, generated protos, grpc-js and
       google-protobuf deps; errors.ts mapped to ADBC error surface
-- [ ] Unit tests adapted; integration tests green
+- [x] Unit tests adapted; integration tests green
 
 ## Phase 3 — GizmoSQL-semantics tests + docs
 

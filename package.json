@@ -25,15 +25,14 @@
   "scripts": {
     "prebuild": "npm run clean && npm run proto:generate",
     "build": "tsc -p tsconfig.json",
-    "postbuild": "cp -r src/generated dist/generated",
     "clean": "rimraf dist/",
     "postinstall": "node scripts/download-driver.cjs",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "jest --testPathIgnorePatterns=integration",
-    "test:unit": "jest --testPathIgnorePatterns=integration",
-    "test:integration": "jest --testPathPatterns=integration",
-    "test:all": "jest",
-    "test:watch": "jest --watch --testPathIgnorePatterns=integration",
+    "test": "jest --config jest.unit.config.js --testPathIgnorePatterns=integration",
+    "test:unit": "jest --config jest.unit.config.js --testPathIgnorePatterns=integration",
+    "test:integration": "NODE_OPTIONS=--experimental-vm-modules jest --testPathPatterns=integration",
+    "test:all": "npm run test:unit && npm run test:integration",
+    "test:watch": "jest --config jest.unit.config.js --watch --testPathIgnorePatterns=integration",
     "lint": "eslint src test --fix",
     "lint:ci": "eslint src test",
     "typecheck": "tsc --noEmit",
@@ -55,9 +54,7 @@
   ],
   "dependencies": {
     "@apache-arrow/adbc-driver-manager": "^0.24.0",
-    "@grpc/grpc-js": "^1.13.4",
-    "apache-arrow": "^21.0.0",
-    "google-protobuf": "^4.0.0"
+    "apache-arrow": "^21.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",

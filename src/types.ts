@@ -6,6 +6,8 @@ export interface FlightClientConfig {
   username?: string;
   password?: string;
   token?: string;
+  /** OAuth HTTP port probed by discoverOAuthUrl() (default 31339). */
+  oauthPort?: number;
 }
 
 export type FlightSQLClientConfig = FlightClientConfig;

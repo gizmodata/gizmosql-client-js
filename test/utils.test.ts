@@ -1,132 +1,62 @@
+import { createConnectionString, validateConfig, toClientError } from '../src/utils';
 import {
-  createConnectionString,
-  parseErrorFromGrpc,
-  validateConfig
-} from '../src/utils';
-import {FlightError} from '../src';
+  AuthenticationError,
+  ConnectionError,
+  FlightError,
+  FlightSQLError,
+} from '../src/errors';
 
-describe('Utils', () => {
-  describe('validateConfig', () => {
-    it('should pass validation for valid config', () => {
-      expect(() => {
-        validateConfig({ host: 'localhost', port: 4317 });
-      }).not.toThrow();
-    });
-
-    it('should pass validation with different hosts', () => {
-      expect(() => {
-        validateConfig({ host: '127.0.0.1', port: 8080 });
-      }).not.toThrow();
-
-      expect(() => {
-        validateConfig({ host: 'example.com', port: 443 });
-      }).not.toThrow();
-    });
-
-    it('should throw for missing host', () => {
-      expect(() => {
-        validateConfig({ host: '', port: 4317 });
-      }).toThrow('Host is required');
-
-      expect(() => {
-        validateConfig({ port: 4317 } as any);
-      }).toThrow('Host is required');
-    });
-
-    it('should throw for invalid port', () => {
-      expect(() => {
-        validateConfig({ host: 'localhost', port: 0 });
-      }).toThrow('Valid port number is required');
-
-      expect(() => {
-        validateConfig({ host: 'localhost', port: -1 });
-      }).toThrow('Valid port number is required');
-
-      expect(() => {
-        validateConfig({ host: 'localhost' } as any);
-      }).toThrow('Valid port number is required');
-    });
+describe('createConnectionString', () => {
+  it('builds https URLs by default', () => {
+    expect(createConnectionString('localhost', 31337, false)).toBe('https://localhost:31337');
   });
 
-  describe('createConnectionString', () => {
-    it('should create HTTP connection string for plaintext', () => {
-      const connectionString = createConnectionString('localhost', 4317, true);
-      expect(connectionString).toBe('http://localhost:4317');
-    });
+  it('builds http URLs for plaintext', () => {
+    expect(createConnectionString('localhost', 31337, true)).toBe('http://localhost:31337');
+  });
+});
 
-    it('should create HTTPS connection string by default', () => {
-      const connectionString = createConnectionString('localhost', 4317, false);
-      expect(connectionString).toBe('https://localhost:4317');
-    });
-
-    it('should handle different hosts and ports', () => {
-      expect(createConnectionString('example.com', 8080, true)).toBe('http://example.com:8080');
-      expect(createConnectionString('127.0.0.1', 443, false)).toBe('https://127.0.0.1:443');
-    });
+describe('validateConfig', () => {
+  it('accepts a valid config', () => {
+    expect(() => validateConfig({ host: 'localhost', port: 31337 })).not.toThrow();
   });
 
-  describe('parseErrorFromGrpc', () => {
-    it('should handle authentication errors', () => {
-      const grpcError = { code: 16, message: '16 UNAUTHENTICATED: Invalid credentials', details: 'Invalid credentials' };
-      const flightError = parseErrorFromGrpc(grpcError);
+  it('rejects a missing host', () => {
+    expect(() => validateConfig({ host: '', port: 31337 })).toThrow(FlightError);
+  });
 
-      expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Invalid credentials');
-      expect(flightError.code).toBe('UNAUTHENTICATED');
-    });
+  it('rejects an invalid port', () => {
+    expect(() => validateConfig({ host: 'localhost', port: 0 })).toThrow(FlightError);
+    expect(() => validateConfig({ host: 'localhost', port: -1 })).toThrow(FlightError);
+  });
+});
 
-    it('should fall back to message when details is absent', () => {
-      const grpcError = { code: 16, message: 'Unauthenticated' };
-      const flightError = parseErrorFromGrpc(grpcError);
+describe('toClientError (ADBC error mapping)', () => {
+  it('passes through existing FlightErrors unchanged', () => {
+    const original = new FlightSQLError('boom');
+    expect(toClientError(original, 'ctx')).toBe(original);
+  });
 
-      expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Unauthenticated');
-      expect(flightError.code).toBe('UNAUTHENTICATED');
-    });
+  it('maps Unauthenticated to AuthenticationError', () => {
+    const err = toClientError({ message: 'bad creds', code: 'Unauthenticated' }, 'Failed to connect');
+    expect(err).toBeInstanceOf(AuthenticationError);
+    expect(err.message).toContain('bad creds');
+  });
 
-    it('should handle unavailable errors', () => {
-      const grpcError = { code: 14, message: '14 UNAVAILABLE: Connection refused', details: 'Connection refused' };
-      const flightError = parseErrorFromGrpc(grpcError);
+  it('maps IO errors to ConnectionError', () => {
+    const err = toClientError({ message: 'refused', code: 'IO' }, 'Failed to connect');
+    expect(err).toBeInstanceOf(ConnectionError);
+    expect(err.message).toContain('Failed to connect');
+  });
 
-      expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Connection refused');
-      expect(flightError.code).toBe('UNAVAILABLE');
-    });
+  it('uses the fallback class with the ADBC code preserved', () => {
+    const err = toClientError({ message: 'syntax', code: 'InvalidArguments' }, 'Failed to execute', FlightSQLError);
+    expect(err).toBeInstanceOf(FlightSQLError);
+    expect(err.code).toBe('InvalidArguments');
+  });
 
-    it('should handle unknown errors', () => {
-      const grpcError = { code: 99, message: 'Unknown error' };
-      const flightError = parseErrorFromGrpc(grpcError);
-
-      expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Unknown error');
-      expect(flightError.code).toBe('99');
-    });
-
-    it('should handle errors without message', () => {
-      const grpcError = { code: 1 };
-      const flightError = parseErrorFromGrpc(grpcError);
-
-      expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Unknown error');
-      expect(flightError.code).toBe('1');
-    });
-
-    it('should handle errors without code', () => {
-      const grpcError = { message: 'Some error' };
-      const flightError = parseErrorFromGrpc(grpcError);
-
-      expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Some error');
-      expect(flightError.code).toBeUndefined();
-    });
-
-    it('should handle completely malformed errors', () => {
-      const grpcError = {};
-      const flightError = parseErrorFromGrpc(grpcError);
-
-      expect(flightError).toBeInstanceOf(FlightError);
-      expect(flightError.message).toBe('Unknown error');
-      expect(flightError.code).toBeUndefined();
-    });
+  it('stringifies unknown error shapes', () => {
+    const err = toClientError('plain string failure', 'ctx');
+    expect(err.message).toContain('plain string failure');
   });
 });

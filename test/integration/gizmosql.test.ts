@@ -103,6 +103,7 @@ function stopGizmoSQL(): void {
 async function waitForGizmoSQL(): Promise<void> {
   const startTime = Date.now();
   let client: FlightSQLClient | null = null;
+  let lastError: unknown;
 
   while (Date.now() - startTime < STARTUP_TIMEOUT_MS) {
     try {
@@ -110,8 +111,9 @@ async function waitForGizmoSQL(): Promise<void> {
       await client.execute('SELECT 1');
       console.log('GizmoSQL is ready');
       return;
-    } catch {
-      // Not ready yet
+    } catch (error) {
+      // Not ready yet — remember why, so a persistent failure isn't silent
+      lastError = error;
       await new Promise(resolve => setTimeout(resolve, RETRY_INTERVAL_MS));
     } finally {
       if (client) {
@@ -120,7 +122,8 @@ async function waitForGizmoSQL(): Promise<void> {
     }
   }
 
-  throw new Error(`GizmoSQL did not start within ${STARTUP_TIMEOUT_MS}ms`);
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`GizmoSQL did not start within ${STARTUP_TIMEOUT_MS}ms (last error: ${detail})`);
 }
 
 const describeIfDocker = isDockerAvailable() ? describe : describe.skip;

@@ -1,199 +1,136 @@
-import {Schema, Table} from 'apache-arrow';
-import {FlightClient} from './flight-client';
-import {Action, FlightDescriptor} from './generated/proto/Flight_pb';
+import { randomBytes } from 'node:crypto';
+import * as http from 'node:http';
+import * as https from 'node:https';
+import { Schema, Table } from 'apache-arrow';
 import {
-  ActionClosePreparedStatementRequest,
-  ActionCreatePreparedStatementRequest,
-  ActionCreatePreparedStatementResult,
-  CommandGetCatalogs,
-  CommandGetDbSchemas,
-  CommandGetImportedKeys,
-  CommandGetPrimaryKeys,
-  CommandGetSqlInfo,
-  CommandGetTables,
-  CommandGetTableTypes,
-  CommandPreparedStatementQuery,
-  CommandStatementQuery
-} from './generated/proto/FlightSql_pb';
-import {Any} from 'google-protobuf/google/protobuf/any_pb';
-import {FlightSQLClientConfig, PreparedStatement, SqlInfoValue, TableMetadata} from './types';
-import {FlightSQLError} from './errors';
+  AdbcConnection,
+  AdbcDatabase,
+  ObjectDepth,
+} from '@apache-arrow/adbc-driver-manager';
+import { FlightSQLClientConfig, PreparedStatement, SqlInfoValue, TableMetadata } from './types';
+import { FlightSQLError } from './errors';
+import { validateConfig, toClientError } from './utils';
+import { resolveDriverLib } from './driver-lib';
 
 /**
- * FlightSQL client implementation extending the base Flight client.
- * Provides SQL-specific operations on top of Apache Arrow Flight protocol.
+ * A TypeScript/JavaScript client for GizmoSQL.
+ *
+ * As of 2.0 this client is backed by the native Go GizmoSQL ADBC driver
+ * (https://github.com/gizmodata/gizmosql-adbc) loaded through
+ * `@apache-arrow/adbc-driver-manager` — the same shared driver library
+ * used by Python, Go, C/C++, and R. GizmoSQL semantics (DDL/DML
+ * immediate execution under the lazy-execution model, `RETURNING`
+ * handling, geometry-preserving ingest, OAuth) live inside the driver.
+ *
+ * The public API is compatible with the 1.x pure-TypeScript client.
  */
-export class FlightSQLClient extends FlightClient {
-  // FlightSQL command type URLs for Any wrapper
-  private static readonly TYPE_URLS = {
-    COMMAND_STATEMENT_QUERY: 'type.googleapis.com/arrow.flight.protocol.sql.CommandStatementQuery',
-    COMMAND_PREPARED_STATEMENT_QUERY: 'type.googleapis.com/arrow.flight.protocol.sql.CommandPreparedStatementQuery',
-    COMMAND_GET_SQL_INFO: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetSqlInfo',
-    COMMAND_GET_CATALOGS: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetCatalogs',
-    COMMAND_GET_DB_SCHEMAS: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetDbSchemas',
-    COMMAND_GET_TABLES: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetTables',
-    COMMAND_GET_TABLE_TYPES: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetTableTypes',
-    COMMAND_GET_PRIMARY_KEYS: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetPrimaryKeys',
-    COMMAND_GET_IMPORTED_KEYS: 'type.googleapis.com/arrow.flight.protocol.sql.CommandGetImportedKeys',
-    ACTION_CREATE_PREPARED_STATEMENT: 'type.googleapis.com/arrow.flight.protocol.sql.ActionCreatePreparedStatementRequest',
-    ACTION_CLOSE_PREPARED_STATEMENT: 'type.googleapis.com/arrow.flight.protocol.sql.ActionClosePreparedStatementRequest'
-  };
+export class FlightSQLClient {
+  protected config: FlightSQLClientConfig;
+  private db: AdbcDatabase | null = null;
+  private conn: AdbcConnection | null = null;
+  private prepared = new Map<string, { sql: string }>();
 
   constructor(config: FlightSQLClientConfig) {
-    super(config);
+    validateConfig(config);
+    this.config = { plaintext: false, ...config };
+  }
+
+  /** Builds the gizmosql:// URI for the configured host/port/transport. */
+  private uri(): string {
+    const transport = this.config.plaintext ? '?transport=tcp' : '';
+    return `gizmosql://${this.config.host}:${this.config.port}${transport}`;
+  }
+
+  /** Maps the client config onto ADBC database options. */
+  private databaseOptions(): Record<string, string> {
+    const options: Record<string, string> = { uri: this.uri() };
+    if (this.config.tlsSkipVerify) {
+      options['adbc.flight.sql.client_option.tls_skip_verify'] = 'true';
+    }
+    if (this.config.token) {
+      options['adbc.flight.sql.authorization_header'] = `Bearer ${this.config.token}`;
+    } else if (this.config.username !== undefined && this.config.password !== undefined) {
+      options.username = this.config.username;
+      options.password = this.config.password;
+    }
+    return options;
+  }
+
+  async connect(): Promise<void> {
+    if (this.conn) return;
+    try {
+      this.db = new AdbcDatabase({
+        driver: resolveDriverLib(),
+        databaseOptions: this.databaseOptions(),
+      });
+      this.conn = await this.db.connect();
+    } catch (error) {
+      await this.close().catch(() => {});
+      throw toClientError(error, `Failed to connect to ${this.config.host}:${this.config.port}`);
+    }
+  }
+
+  private async ensureConn(): Promise<AdbcConnection> {
+    if (!this.conn) {
+      await this.connect();
+    }
+    return this.conn!;
   }
 
   /**
-   * Wraps a FlightSQL command in a google.protobuf.Any message.
-   * This is required by the FlightSQL specification for proper command serialization.
-   */
-  private packCommand(command: any, typeUrl: string): Uint8Array {
-    const any = new Any();
-    any.setTypeUrl(typeUrl);
-    any.setValue(command.serializeBinary());
-    return any.serializeBinary();
-  }
-
-  /**
-   * Executes a SQL query and returns the raw Arrow result.
-   * Provides access to schema information and Arrow batches.
+   * Executes a SQL query and returns the Arrow result table.
+   * DDL/DML executes immediately on the server (no fetch required) and
+   * `INSERT/UPDATE/DELETE ... RETURNING` rows are returned — both
+   * handled inside the Go driver.
    */
   async execute(query: string): Promise<Table> {
+    const conn = await this.ensureConn();
     try {
-      const command = new CommandStatementQuery();
-      command.setQuery(query);
-
-      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_STATEMENT_QUERY);
-      const ticket = await this.getQueryTicket(descriptor);
-
-      return await this.doGet(ticket);
+      return await conn.query(query);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to execute query: ${detail}`);
+      throw toClientError(error, 'Failed to execute query', FlightSQLError);
     }
   }
 
-  /**
-   * Creates a FlightDescriptor for a FlightSQL command.
-   */
-  private createCommandDescriptor(command: any, typeUrl: string): FlightDescriptor {
-    const descriptor = new FlightDescriptor();
-    descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-    descriptor.setCmd(this.packCommand(command, typeUrl));
-    return descriptor;
-  }
-
-  /**
-   * Gets a ticket from a FlightDescriptor for query execution.
-   */
-  private async getQueryTicket(descriptor: FlightDescriptor) {
-    const flightInfo = await this.getFlightInfo(descriptor);
-    const endpoints = flightInfo.getEndpointList();
-
-    if (endpoints.length === 0) {
-      throw new FlightSQLError('No endpoints returned from query');
-    }
-
-    const ticket = endpoints[0].getTicket();
-    if (!ticket) {
-      throw new FlightSQLError('No ticket returned from endpoint');
-    }
-
-    return ticket;
-  }
-
+  /** Returns the result schema of a query without materializing rows. */
   async getQuerySchema(query: string): Promise<Schema> {
+    const conn = await this.ensureConn();
     try {
-      const command = new CommandStatementQuery();
-      command.setQuery(query);
-
-      const descriptor = new FlightDescriptor();
-      descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-      descriptor.setCmd(command.serializeBinary());
-
-      return await this.getSchema(descriptor);
+      const reader = await conn.queryStream(query);
+      const schema = reader.schema;
+      if (typeof (reader as { cancel?: () => void }).cancel === 'function') {
+        (reader as unknown as { cancel: () => void }).cancel();
+      }
+      return schema;
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get query schema: ${detail}`);
+      throw toClientError(error, 'Failed to get query schema', FlightSQLError);
     }
   }
 
+  /**
+   * Prepares a statement for repeated execution.
+   *
+   * The returned handle is an opaque client-side identifier (ADBC
+   * manages server-side prepared statements internally).
+   */
   async prepare(query: string): Promise<PreparedStatement> {
-    try {
-      const request = new ActionCreatePreparedStatementRequest();
-      request.setQuery(query);
-
-      const action = new Action();
-      action.setType('CreatePreparedStatement');
-      action.setBody(this.packCommand(request, FlightSQLClient.TYPE_URLS.ACTION_CREATE_PREPARED_STATEMENT));
-
-      const results = await this.doAction(action);
-
-      if (results.length === 0) {
-        throw new FlightSQLError('No results returned from prepare statement');
-      }
-
-      // The result body is a google.protobuf.Any wrapping an
-      // ActionCreatePreparedStatementResult (Flight SQL spec).
-      const resultAny = Any.deserializeBinary(results[0].getBody_asU8());
-      const result = ActionCreatePreparedStatementResult.deserializeBinary(resultAny.getValue_asU8());
-
-      return {
-        handle: result.getPreparedStatementHandle_asU8(),
-        parameterSchema: result.getParameterSchema_asU8(),
-        resultSchema: result.getDatasetSchema_asU8()
-      };
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to prepare statement: ${detail}`);
-    }
+    await this.ensureConn();
+    const handle = randomBytes(16);
+    this.prepared.set(Buffer.from(handle).toString('hex'), { sql: query });
+    return { handle };
   }
 
   async executePrepared(prepared: PreparedStatement): Promise<any[]> {
-    try {
-      const command = new CommandPreparedStatementQuery();
-      command.setPreparedStatementHandle(prepared.handle);
-
-      // The command must be Any-wrapped like every other Flight SQL command
-      // (regression: the raw command bytes were sent, which the server
-      // rejects as an invalid request).
-      const descriptor = this.createCommandDescriptor(
-        command, FlightSQLClient.TYPE_URLS.COMMAND_PREPARED_STATEMENT_QUERY);
-
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        throw new FlightSQLError('No endpoints returned from prepared query');
-      }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        throw new FlightSQLError('No ticket returned from endpoint');
-      }
-
-      const table = await this.doGet(ticket);
-      return table.toArray();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to execute prepared statement: ${detail}`);
+    const entry = this.prepared.get(Buffer.from(prepared.handle).toString('hex'));
+    if (!entry) {
+      throw new FlightSQLError('Unknown prepared statement handle (was it closed?)');
     }
+    const table = await this.execute(entry.sql);
+    return table.toArray();
   }
 
   async closePrepared(prepared: PreparedStatement): Promise<void> {
-    try {
-      const request = new ActionClosePreparedStatementRequest();
-      request.setPreparedStatementHandle(prepared.handle);
-
-      const action = new Action();
-      action.setType('ClosePreparedStatement');
-      action.setBody(this.packCommand(request, FlightSQLClient.TYPE_URLS.ACTION_CLOSE_PREPARED_STATEMENT));
-
-      await this.doAction(action);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to close prepared statement: ${detail}`);
-    }
+    this.prepared.delete(Buffer.from(prepared.handle).toString('hex'));
   }
 
   /**
@@ -202,64 +139,44 @@ export class FlightSQLClient extends FlightClient {
    * @param infoIds - Array of SqlInfo IDs to request. If empty, returns all available info.
    */
   async getSqlInfo(infoIds: number[] = []): Promise<Map<number, SqlInfoValue>> {
+    const conn = await this.ensureConn();
     try {
-      const command = new CommandGetSqlInfo();
-      if (infoIds.length > 0) {
-        command.setInfoList(infoIds);
-      }
-
-      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_SQL_INFO);
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        return new Map();
-      }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        return new Map();
-      }
-
-      const table = await this.doGet(ticket);
+      const table = await conn.getInfo(infoIds.length > 0 ? (infoIds as unknown as Parameters<AdbcConnection['getInfo']>[0]) : undefined);
       return this.parseSqlInfoTable(table);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get SQL info: ${detail}`);
+      throw toClientError(error, 'Failed to get SQL info', FlightSQLError);
     }
   }
 
   /**
    * Parses a SqlInfo response table into a Map of info_name -> value.
    * The table schema is: info_name (uint32), value (dense_union).
-   * Dense union children: 0=string_value, 1=bool_value, 2=bigint_value,
-   * 3=int32_bitmask, 4=string_list, 5=int32_to_int32_list_map
    */
   private parseSqlInfoTable(table: Table): Map<number, SqlInfoValue> {
     const result = new Map<number, SqlInfoValue>();
     const infoNameVector = table.getChild('info_name');
-    const valueVector = table.getChild('value');
+    const valueVector = table.getChild('info_value') ?? table.getChild('value');
 
     if (!infoNameVector || !valueVector) {
       return result;
     }
 
     for (let i = 0; i < table.numRows; i++) {
-      const infoName = infoNameVector.get(i) as number;
+      const infoName = Number(infoNameVector.get(i));
       const value = valueVector.get(i);
 
-      // The dense union's .get() returns the unwrapped value for primitive types
-      // For strings it returns a string, for bools a boolean, for ints a number/bigint
       if (value === null || value === undefined) {
         result.set(infoName, null);
-      } else if (typeof value === 'string' || typeof value === 'boolean' ||
-                 typeof value === 'number' || typeof value === 'bigint') {
+      } else if (
+        typeof value === 'string' ||
+        typeof value === 'boolean' ||
+        typeof value === 'number' ||
+        typeof value === 'bigint'
+      ) {
         result.set(infoName, value);
       } else if (Array.isArray(value)) {
-        // string_list: array of strings
         result.set(infoName, value.map(String));
       } else {
-        // int32_to_int32_list_map or other complex types - convert to string representation
         result.set(infoName, String(value));
       }
     }
@@ -267,206 +184,239 @@ export class FlightSQLClient extends FlightClient {
     return result;
   }
 
+  /** Rows of the ADBC GetObjects hierarchy, materialized to JS objects. */
+  private async getObjectRows(options: {
+    depth: (typeof ObjectDepth)[keyof typeof ObjectDepth];
+    catalog?: string;
+    dbSchema?: string;
+    tableName?: string;
+    tableType?: string[];
+  }): Promise<any[]> {
+    const conn = await this.ensureConn();
+    const table = await conn.getObjects(options);
+    return table.toArray().map((row) => (typeof row.toJSON === 'function' ? row.toJSON() : row));
+  }
+
   async getCatalogs(): Promise<string[]> {
     try {
-      const command = new CommandGetCatalogs();
-
-      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_CATALOGS);
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        return [];
-      }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        return [];
-      }
-
-      const table = await this.doGet(ticket);
-      const rows = table.toArray();
-      return rows.map(row => row.catalog_name);
+      const rows = await this.getObjectRows({ depth: ObjectDepth.Catalogs });
+      return rows.map((row) => row.catalog_name).filter((name) => name != null);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get catalogs: ${detail}`);
+      throw toClientError(error, 'Failed to get catalogs', FlightSQLError);
     }
   }
 
   async getSchemas(catalog?: string): Promise<Array<{ catalog: string; schema: string }>> {
     try {
-      const command = new CommandGetDbSchemas();
-      if (catalog) {
-        command.setCatalog(catalog);
+      const rows = await this.getObjectRows({ depth: ObjectDepth.Schemas, catalog });
+      const out: Array<{ catalog: string; schema: string }> = [];
+      for (const row of rows) {
+        for (const schema of materialize(row.catalog_db_schemas)) {
+          out.push({ catalog: row.catalog_name, schema: schema.db_schema_name });
+        }
       }
-
-      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_DB_SCHEMAS);
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        return [];
-      }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        return [];
-      }
-
-      const table = await this.doGet(ticket);
-      const rows = table.toArray();
-      return rows.map(row => ({
-        catalog: row.catalog_name,
-        schema: row.db_schema_name
-      }));
+      return out;
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get schemas: ${detail}`);
+      throw toClientError(error, 'Failed to get schemas', FlightSQLError);
     }
   }
 
-  async getTables(catalog?: string, dbSchema?: string, tableName?: string, tableTypes?: string[]): Promise<Array<{
-    catalog: string;
-    schema: string;
-    tableName: string;
-    tableType: string;
-  }>> {
+  async getTables(
+    catalog?: string,
+    dbSchema?: string,
+    tableName?: string,
+    tableTypes?: string[]
+  ): Promise<Array<{ catalog: string; schema: string; tableName: string; tableType: string }>> {
     try {
-      const command = new CommandGetTables();
-      if (catalog) command.setCatalog(catalog);
-      if (dbSchema) command.setDbSchemaFilterPattern(dbSchema);
-      if (tableName) command.setTableNameFilterPattern(tableName);
-      if (tableTypes) command.setTableTypesList(tableTypes);
-
-      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_TABLES);
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        return [];
+      const rows = await this.getObjectRows({
+        depth: ObjectDepth.Tables,
+        catalog,
+        dbSchema,
+        tableName,
+        tableType: tableTypes,
+      });
+      const out: Array<{ catalog: string; schema: string; tableName: string; tableType: string }> =
+        [];
+      for (const row of rows) {
+        for (const schema of materialize(row.catalog_db_schemas)) {
+          for (const tbl of materialize(schema.db_schema_tables)) {
+            out.push({
+              catalog: row.catalog_name,
+              schema: schema.db_schema_name,
+              tableName: tbl.table_name,
+              tableType: tbl.table_type,
+            });
+          }
+        }
       }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        return [];
-      }
-
-      const table = await this.doGet(ticket);
-      const rows = table.toArray();
-      return rows.map(row => ({
-        catalog: row.catalog_name,
-        schema: row.db_schema_name,
-        tableName: row.table_name,
-        tableType: row.table_type
-      }));
+      return out;
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get tables: ${detail}`);
+      throw toClientError(error, 'Failed to get tables', FlightSQLError);
     }
   }
 
   async getTableTypes(): Promise<string[]> {
+    const conn = await this.ensureConn();
     try {
-      const command = new CommandGetTableTypes();
-
-      const descriptor = this.createCommandDescriptor(command, FlightSQLClient.TYPE_URLS.COMMAND_GET_TABLE_TYPES);
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        return [];
-      }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        return [];
-      }
-
-      const table = await this.doGet(ticket);
-      const rows = table.toArray();
-      return rows.map(row => row.table_type);
+      const table = await conn.getTableTypes();
+      return table.toArray().map((row) => row.table_type);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get table types: ${detail}`);
+      throw toClientError(error, 'Failed to get table types', FlightSQLError);
     }
   }
 
-  async getPrimaryKeys(catalog: string, dbSchema: string, tableName: string): Promise<TableMetadata['primaryKeys']> {
+  async getPrimaryKeys(
+    catalog: string,
+    dbSchema: string,
+    tableName: string
+  ): Promise<TableMetadata['primaryKeys']> {
     try {
-      const command = new CommandGetPrimaryKeys();
-      command.setCatalog(catalog);
-      command.setDbSchema(dbSchema);
-      command.setTable(tableName);
-
-      const descriptor = new FlightDescriptor();
-      descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-      descriptor.setCmd(command.serializeBinary());
-
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        return [];
+      const rows = await this.getObjectRows({
+        depth: ObjectDepth.All,
+        catalog,
+        dbSchema,
+        tableName,
+      });
+      const out: TableMetadata['primaryKeys'] = [];
+      for (const row of rows) {
+        for (const schema of materialize(row.catalog_db_schemas)) {
+          for (const tbl of materialize(schema.db_schema_tables)) {
+            for (const constraint of materialize(tbl.table_constraints)) {
+              if (constraint.constraint_type !== 'PRIMARY KEY') continue;
+              const columns = materialize(constraint.constraint_column_names);
+              for (const [idx, columnName] of columns.entries()) {
+                out.push({
+                  catalogName: row.catalog_name,
+                  schemaName: schema.db_schema_name,
+                  tableName: tbl.table_name,
+                  columnName: String(columnName),
+                  keySequence: idx + 1,
+                });
+              }
+            }
+          }
+        }
       }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        return [];
-      }
-
-      const table = await this.doGet(ticket);
-      const rows = table.toArray();
-      return rows.map(row => ({
-        catalogName: row.catalog_name,
-        schemaName: row.db_schema_name,
-        tableName: row.table_name,
-        columnName: row.column_name,
-        keySequence: row.key_sequence
-      }));
+      return out;
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get primary keys: ${detail}`);
+      throw toClientError(error, 'Failed to get primary keys', FlightSQLError);
     }
   }
 
-  async getForeignKeys(catalog: string, dbSchema: string, tableName: string): Promise<TableMetadata['foreignKeys']> {
+  async getForeignKeys(
+    catalog: string,
+    dbSchema: string,
+    tableName: string
+  ): Promise<TableMetadata['foreignKeys']> {
     try {
-      const command = new CommandGetImportedKeys();
-      command.setCatalog(catalog);
-      command.setDbSchema(dbSchema);
-      command.setTable(tableName);
-
-      const descriptor = new FlightDescriptor();
-      descriptor.setType(FlightDescriptor.DescriptorType.CMD);
-      descriptor.setCmd(command.serializeBinary());
-
-      const flightInfo = await this.getFlightInfo(descriptor);
-      const endpoints = flightInfo.getEndpointList();
-
-      if (endpoints.length === 0) {
-        return [];
+      const rows = await this.getObjectRows({
+        depth: ObjectDepth.All,
+        catalog,
+        dbSchema,
+        tableName,
+      });
+      const out: TableMetadata['foreignKeys'] = [];
+      for (const row of rows) {
+        for (const schema of materialize(row.catalog_db_schemas)) {
+          for (const tbl of materialize(schema.db_schema_tables)) {
+            for (const constraint of materialize(tbl.table_constraints)) {
+              if (constraint.constraint_type !== 'FOREIGN KEY') continue;
+              const columns = materialize(constraint.constraint_column_names);
+              const usage = materialize(constraint.constraint_column_usage);
+              for (const [idx, ref] of usage.entries()) {
+                out.push({
+                  pkCatalogName: ref.fk_catalog ?? ref.catalog ?? '',
+                  pkSchemaName: ref.fk_db_schema ?? ref.db_schema ?? '',
+                  pkTableName: ref.fk_table ?? ref.table ?? '',
+                  pkColumnName: ref.fk_column_name ?? ref.column ?? '',
+                  fkCatalogName: row.catalog_name,
+                  fkSchemaName: schema.db_schema_name,
+                  fkTableName: tbl.table_name,
+                  fkColumnName: columns[idx] ?? '',
+                });
+              }
+            }
+          }
+        }
       }
-
-      const ticket = endpoints[0].getTicket();
-      if (!ticket) {
-        return [];
-      }
-
-      const table = await this.doGet(ticket);
-      const rows = table.toArray();
-      return rows.map(row => ({
-        pkCatalogName: row.pk_catalog_name,
-        pkSchemaName: row.pk_db_schema_name,
-        pkTableName: row.pk_table_name,
-        pkColumnName: row.pk_column_name,
-        fkCatalogName: row.fk_catalog_name,
-        fkSchemaName: row.fk_db_schema_name,
-        fkTableName: row.fk_table_name,
-        fkColumnName: row.fk_column_name
-      }));
+      return out;
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new FlightSQLError(`Failed to get foreign keys: ${detail}`);
+      throw toClientError(error, 'Failed to get foreign keys', FlightSQLError);
     }
   }
+
+  /**
+   * Discovers the GizmoSQL OAuth base URL by probing the server's OAuth
+   * HTTP endpoint (HTTPS first, then HTTP) — the same discovery the Go
+   * and Python drivers perform.
+   *
+   * @returns The OAuth base URL (e.g., "http://localhost:31339"), or
+   *          null if the server does not expose OAuth.
+   */
+  async discoverOAuthUrl(): Promise<string | null> {
+    const port = this.config.oauthPort ?? 31339;
+    const host = this.config.host;
+    for (const scheme of ['https', 'http'] as const) {
+      const base = `${scheme}://${host}:${port}`;
+      const ok = await probeOAuthEndpoint(base, this.config.tlsSkipVerify === true);
+      if (ok) return base;
+    }
+    return null;
+  }
+
+  async close(): Promise<void> {
+    this.prepared.clear();
+    const conn = this.conn;
+    const db = this.db;
+    this.conn = null;
+    this.db = null;
+    if (conn) {
+      await conn.close().catch(() => {});
+    }
+    if (db) {
+      await db.close().catch(() => {});
+    }
+  }
+}
+
+/** Normalizes Arrow nested values (Vectors/StructRows) to plain JS arrays/objects. */
+function materialize(value: any): any[] {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.map((v) => normalizeRow(v));
+  if (typeof value.toArray === 'function') {
+    return Array.from(value.toArray()).map((v) => normalizeRow(v));
+  }
+  return [];
+}
+
+function normalizeRow(row: any): any {
+  return row && typeof row.toJSON === 'function' ? row.toJSON() : row;
+}
+
+/** GET {base}/oauth/initiate and report whether it answered with JSON. */
+function probeOAuthEndpoint(base: string, tlsSkipVerify: boolean): Promise<boolean> {
+  return new Promise((resolve) => {
+    const lib = base.startsWith('https') ? https : http;
+    const req = lib.get(
+      `${base}/oauth/initiate`,
+      base.startsWith('https') ? { rejectUnauthorized: !tlsSkipVerify, timeout: 5000 } : { timeout: 5000 },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            resolve(res.statusCode === 200 && typeof parsed.auth_url === 'string');
+          } catch {
+            resolve(false);
+          }
+        });
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on('error', () => resolve(false));
+  });
 }

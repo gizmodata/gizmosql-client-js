@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **FlightSQLClient is now backed by the native Go GizmoSQL ADBC driver**
+  (loaded via `@apache-arrow/adbc-driver-manager`): `execute()`, prepared
+  statements, and all metadata methods (`getCatalogs`/`getSchemas`/
+  `getTables`/`getTableTypes`/`getSqlInfo`/`getPrimaryKeys`/
+  `getForeignKeys`) run over ADBC, gaining DDL/DML immediate execution,
+  `RETURNING` support, `gizmosql://` URIs (TLS by default), and
+  geometry-preserving ingest from the shared driver library. The public
+  API is unchanged; results are still `apache-arrow` tables.
+- `discoverOAuthUrl()` now probes the server's OAuth HTTP endpoint
+  (HTTPS then HTTP, `oauthPort` config option, default 31339) — the same
+  discovery the Go/Python drivers perform — instead of the gRPC
+  handshake header.
+- Prepared statements are managed client-side over ADBC (opaque handles;
+  `parameterSchema`/`resultSchema` are no longer populated).
+
+### Removed
+- **The low-level `FlightClient` class, the generated Flight protobufs,
+  and the `@grpc/grpc-js` / `google-protobuf` dependencies** — the
+  transport layer is the shared Go driver now. (Breaking for 2.0; the
+  `FlightSQLClient` surface consumed by gizmosql-ui is unchanged.)
+
 ### Added
 - **Native driver resolver + postinstall downloader** (2.0 groundwork):
   `resolveDriverLib()` in `src/driver-lib.ts` locates the native Go

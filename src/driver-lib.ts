@@ -9,6 +9,7 @@
 
 import * as fs from 'node:fs';
 import path from 'node:path';
+import { FlightError } from './errors';
 
 export interface DriverPlatform {
   /** Release-asset platform key, e.g. "macos_arm64" */
@@ -50,10 +51,33 @@ export function driverPlatform(
 }
 
 /** Package root (the directory containing package.json / driver-manifest.json). */
+/**
+ * Package root (the directory containing package.json /
+ * driver-manifest.json). In the published CJS build __dirname is
+ * available and the root is one directory up; in ESM contexts (e.g.
+ * ts-jest ESM transforms, where __dirname does not exist) fall back to
+ * walking up from the working directory to the driver-manifest.json
+ * marker.
+ */
 function packageRoot(): string {
-  // This file lives at <pkg>/src/driver-lib.ts (tests) or
-  // <pkg>/dist/driver-lib.js (built), so the package root is one up.
-  return path.resolve(__dirname, '..');
+  if (typeof __dirname !== 'undefined') {
+    // <pkg>/dist/driver-lib.js (built) or <pkg>/src/driver-lib.ts.
+    return path.resolve(__dirname, '..');
+  }
+  let dir = process.cwd();
+  for (;;) {
+    if (fs.existsSync(path.join(dir, 'driver-manifest.json'))) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      throw new FlightError(
+        'Unable to locate the @gizmodata/gizmosql-client package root ' +
+          '(driver-manifest.json not found above the working directory)'
+      );
+    }
+    dir = parent;
+  }
 }
 
 /** Pinned driver version from driver-manifest.json. */
