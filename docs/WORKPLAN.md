@@ -66,11 +66,15 @@ See `docs/go-driver-rewrite-plan.md` for design.
 
 ## Phase 4 — gizmosql-ui verification
 
-- [ ] `npm pack` the client; install the tarball into
-      /Users/philip/LocalOnly/git/gizmosql-ui (in a throwaway copy or
-      via npm overrides — do NOT commit changes to gizmosql-ui);
-      `npm run build` + its test suite green; note any API friction
-- [ ] Record UI findings + any needed client fixes
+- [x] `npm pack` → installed into a clean gizmosql-ui git worktree
+      (repo untouched): `next build` green, eslint clean, and live
+      smokes of both real UI call patterns pass — the service layer
+      (connect/getCatalogs/getTables/getSchemas/execute, verified to
+      surface created tables) and the OAuth-discovery route
+      (credential-less discoverOAuthUrl). The client's postinstall
+      auto-downloaded driver 2.0.1 during the tarball install.
+- [x] UI findings: zero API friction — no gizmosql-ui changes needed
+      beyond the eventual dependency bump at release
 
 ## Philip-gated (do not do autonomously)
 

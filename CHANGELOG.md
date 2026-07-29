@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prepared statements are managed client-side over ADBC (opaque handles;
   `parameterSchema`/`resultSchema` are no longer populated).
 
+### Verified
+- `gizmosql-ui` builds and its live call patterns (query service +
+  OAuth-discovery route) pass against the packed 2.0 tarball with zero
+  application changes.
+
 ### Removed
 - **The low-level `FlightClient` class, the generated Flight protobufs,
   and the `@grpc/grpc-js` / `google-protobuf` dependencies** — the
