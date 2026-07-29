@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CI: bumped `actions/checkout` and `actions/setup-node` to v7 and
+  `softprops/action-gh-release` to v3 (retiring Node 20-era action
+  majors).
+
 ## [2.0.0] - 2026-07-29
 
 ### Changed
