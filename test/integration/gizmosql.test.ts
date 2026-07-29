@@ -322,3 +322,57 @@ describeIfDocker('GizmoSQL Integration Tests', () => {
     });
   });
 });
+
+describeIfDocker('GizmoSQL Semantics (via the Go driver)', () => {
+  let client: FlightSQLClient;
+
+  beforeAll(async () => {
+    if (!process.env.CI) {
+      startGizmoSQL();
+    }
+    await waitForGizmoSQL();
+  }, 60000);
+
+  beforeEach(() => {
+    client = new FlightSQLClient(config);
+  });
+
+  afterEach(async () => {
+    const cleanup = new FlightSQLClient(config);
+    try {
+      await cleanup.execute('DROP TABLE IF EXISTS js_semantics_t');
+    } finally {
+      await cleanup.close();
+      await client.close();
+    }
+  });
+
+  it('executes DDL/DML immediately without any fetch', async () => {
+    // The lazy-execution regression: results deliberately ignored.
+    await client.execute('CREATE TABLE js_semantics_t (id INT)');
+    await client.execute('INSERT INTO js_semantics_t VALUES (1), (2)');
+    const count = await client.execute('SELECT COUNT(*)::INT AS n FROM js_semantics_t');
+    expect(count.toArray()[0].n).toBe(2);
+  });
+
+  it('returns RETURNING rows and always persists the DML', async () => {
+    await client.execute('CREATE TABLE js_semantics_t (id INT)');
+    const returned = await client.execute(
+      'INSERT INTO js_semantics_t VALUES (41), (42) RETURNING id'
+    );
+    expect(returned.toArray().map((r: any) => Number(r.id))).toEqual([41, 42]);
+
+    // And persistence even when the result of a RETURNING is ignored:
+    await client.execute('INSERT INTO js_semantics_t VALUES (43) RETURNING id');
+    const count = await client.execute('SELECT COUNT(*)::INT AS n FROM js_semantics_t');
+    expect(count.toArray()[0].n).toBe(3);
+  });
+
+  it('reports rows-affected semantics through DML statements', async () => {
+    await client.execute('CREATE TABLE js_semantics_t (id INT)');
+    await client.execute('INSERT INTO js_semantics_t VALUES (1), (2), (3)');
+    await client.execute('UPDATE js_semantics_t SET id = id + 10 WHERE id > 1');
+    const rows = await client.execute('SELECT id FROM js_semantics_t ORDER BY id');
+    expect(rows.toArray().map((r: any) => Number(r.id))).toEqual([1, 12, 13]);
+  });
+});

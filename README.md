@@ -7,6 +7,17 @@ A TypeScript/JavaScript client for [GizmoSQL](https://github.com/gizmodata/gizmo
 
 ## Features
 
+> **New in 2.0:** the client is powered by the
+> [native Go GizmoSQL ADBC driver](https://github.com/gizmodata/gizmosql-adbc)
+> (downloaded automatically at install time) via
+> [`@apache-arrow/adbc-driver-manager`](https://www.npmjs.com/package/@apache-arrow/adbc-driver-manager)
+> — the same shared driver library used by Python, Go, C/C++, and R.
+> You get GizmoSQL's DDL/DML immediate execution (no fetch required),
+> `INSERT/UPDATE/DELETE ... RETURNING`, `gizmosql://` TLS-by-default
+> transport, and geometry-preserving bulk ingest, all with the same
+> public API as 1.x. See **Migrating to 2.0** below.
+
+
 - Full support for Apache Arrow Flight SQL protocol
 - TLS with certificate verification skip option for self-signed certificates
 - Basic authentication (username/password)
@@ -74,7 +85,7 @@ const client = new FlightSQLClient({
 
 ### OAuth/SSO URL Discovery
 
-If the GizmoSQL server has OAuth/SSO configured, you can discover the OAuth URL via the Flight handshake protocol:
+If the GizmoSQL server has OAuth/SSO configured, you can discover the OAuth base URL (the client probes the server's OAuth HTTP endpoint over HTTPS, then HTTP — set `oauthPort` in the config if the server uses a non-default port; default 31339):
 
 ```typescript
 import { FlightSQLClient } from "@gizmodata/gizmosql-client";
@@ -239,13 +250,35 @@ console.log(table.schema.fields);
 
 ## Dependencies
 
-- `@grpc/grpc-js` - gRPC implementation for Node.js
-- `apache-arrow` - Apache Arrow data format support
-- `google-protobuf` - Protocol Buffers runtime
+- [`@apache-arrow/adbc-driver-manager`](https://www.npmjs.com/package/@apache-arrow/adbc-driver-manager) — loads the native GizmoSQL driver library
+- [`apache-arrow`](https://www.npmjs.com/package/apache-arrow) — Arrow tables/schemas for results
+
+The native driver library (`libadbc_driver_gizmosql`) is fetched at
+install time from the pinned
+[gizmosql-adbc release](https://github.com/gizmodata/gizmosql-adbc/releases)
+and verified by SHA-256. Offline/airgapped installs can set
+`GIZMOSQL_DRIVER_SKIP_DOWNLOAD=1` and point `GIZMOSQL_DRIVER_LIB` at a
+locally built library (`make -C gizmosql-adbc/go lib`).
+
+## Migrating to 2.0
+
+2.0 keeps the `FlightSQLClient` API compatible with 1.x. Breaking
+changes are at the edges:
+
+- **Node.js >= 22** is required (native ADBC driver-manager addon).
+- **`FlightClient` (the low-level Flight RPC class) is removed**, along
+  with the generated protobufs and the `@grpc/grpc-js` dependency. If
+  you used raw Flight RPCs, use the ADBC APIs or the Go driver directly.
+- `discoverOAuthUrl()` probes the server's OAuth HTTP endpoint
+  (configurable via the new `oauthPort` option, default 31339) instead
+  of the gRPC handshake header — same result for standard deployments.
+- `PreparedStatement.handle` is now an opaque client-side identifier and
+  `parameterSchema`/`resultSchema` are no longer populated (ADBC manages
+  server-side prepared state internally).
 
 ## Requirements
 
-- Node.js >= 20.0.0 (browser environments are not supported)
+- Node.js >= 22
 
 ## License
 
