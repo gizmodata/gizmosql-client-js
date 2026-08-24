@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-24
+
 ### Changed
+- **Bundled native driver bumped to `gizmosql-adbc` v2.0.8** (was v2.0.1) —
+  the postinstall download now fetches the v2.0.8 release assets (hashes
+  refreshed in `driver-manifest.json`). v2.0.8 fixes geometry-aware bulk
+  ingest against GizmoSQL ≥ 1.37.0, which creates `GEOMETRY` columns
+  server-side; earlier driver builds failed there with
+  `No function matches 'st_geomfromwkb(GEOMETRY)'`.
 - CI: bumped `actions/checkout` and `actions/setup-node` to v7 and
   `softprops/action-gh-release` to v3 (retiring Node 20-era action
   majors).
