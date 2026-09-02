@@ -1,4 +1,4 @@
-import { AuthenticationError, ConnectionError, FlightError } from './errors';
+import { AuthenticationError, ConnectionError, FlightError } from './errors.js';
 
 export function createConnectionString(host: string, port: number, plaintext: boolean): string {
   const protocol = plaintext ? 'http' : 'https';
@@ -34,7 +34,7 @@ export function toClientError(
   if (code === 'Unauthenticated' || code === 'Unauthorized') {
     return new AuthenticationError(`${context}: ${detail}`);
   }
-  if (code === 'IO' || code === 'Timeout' || code === 'Cancelled') {
+  if (code !== undefined && ['IO', 'Timeout', 'Cancelled'].includes(code)) {
     return new ConnectionError(`${context}: ${detail}`);
   }
   const err = new fallback(`${context}: ${detail}`);

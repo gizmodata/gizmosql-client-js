@@ -1,18 +1,31 @@
 import { execSync } from 'node:child_process';
-import { FlightSQLClient } from '../../src/flightsql-client';
-import { FlightSQLClientConfig } from '../../src/types';
+import { FlightSQLClient } from '../../src/flightsql-client.js';
+import { FlightSQLClientConfig } from '../../src/types.js';
+import { Table, vectorFromArray, Int32, Utf8 } from 'apache-arrow';
 
-const GIZMOSQL_PORT = 31337;
-const GIZMOSQL_PASSWORD = 'test_password';
+// By default the suite starts its own TLS-enabled GizmoSQL container. To
+// run against an already-running server instead (e.g. a dev container on
+// a different port, or one without TLS), set:
+//   GIZMOSQL_TEST_EXTERNAL=1              don't start/stop a container
+//   GIZMOSQL_TEST_HOST / GIZMOSQL_TEST_PORT
+//   GIZMOSQL_TEST_USERNAME / GIZMOSQL_TEST_PASSWORD
+//   GIZMOSQL_TEST_PLAINTEXT=1             connect without TLS
+const EXTERNAL_SERVER = process.env.GIZMOSQL_TEST_EXTERNAL === '1';
+const GIZMOSQL_HOST = process.env.GIZMOSQL_TEST_HOST ?? 'localhost';
+const GIZMOSQL_PORT = Number(process.env.GIZMOSQL_TEST_PORT ?? 31337);
+const GIZMOSQL_USERNAME = process.env.GIZMOSQL_TEST_USERNAME ?? 'gizmosql';
+const GIZMOSQL_PASSWORD = process.env.GIZMOSQL_TEST_PASSWORD ?? 'test_password';
+const GIZMOSQL_PLAINTEXT = process.env.GIZMOSQL_TEST_PLAINTEXT === '1';
 const CONTAINER_NAME = 'gizmosql-test';
 const STARTUP_TIMEOUT_MS = 30000;
 const RETRY_INTERVAL_MS = 1000;
 
 const config: FlightSQLClientConfig = {
-  host: 'localhost',
+  host: GIZMOSQL_HOST,
   port: GIZMOSQL_PORT,
-  tlsSkipVerify: true,
-  username: 'gizmosql',
+  plaintext: GIZMOSQL_PLAINTEXT,
+  tlsSkipVerify: !GIZMOSQL_PLAINTEXT,
+  username: GIZMOSQL_USERNAME,
   password: GIZMOSQL_PASSWORD
 };
 
@@ -23,18 +36,17 @@ const config: FlightSQLClientConfig = {
  * finding it by image ancestry on the runner's Docker daemon.
  */
 function resolveServerContainer(): string | null {
-  try {
-    execSync(`docker inspect -f '{{.State.Running}}' ${CONTAINER_NAME} 2>/dev/null`, { stdio: 'ignore' });
+  // Must check the running state, not just existence: a stopped container
+  // from an earlier local run would otherwise shadow the live server.
+  if (isContainerRunning()) {
     return CONTAINER_NAME;
-  } catch {
-    // Fall through to ancestry lookup
   }
   try {
     const names = execSync(
       'docker ps --filter "ancestor=gizmodata/gizmosql:latest" --format "{{.Names}}"',
       { encoding: 'utf-8' }
     ).trim();
-    return names.split('\n')[0] || null;
+    return names.split('\n', 1)[0] || null;
   } catch {
     return null;
   }
@@ -61,6 +73,9 @@ function isContainerRunning(): boolean {
 }
 
 function startGizmoSQL(): void {
+  if (EXTERNAL_SERVER) {
+    return;
+  }
   // Check if already running (e.g., in CI with services)
   if (isContainerRunning()) {
     console.log('GizmoSQL container already running');
@@ -88,8 +103,8 @@ function startGizmoSQL(): void {
 }
 
 function stopGizmoSQL(): void {
-  // Don't stop if running in CI (managed by service)
-  if (process.env.CI) {
+  // Don't stop if running in CI (managed by service) or externally
+  if (EXTERNAL_SERVER || process.env.CI) {
     return;
   }
 
@@ -126,7 +141,7 @@ async function waitForGizmoSQL(): Promise<void> {
   throw new Error(`GizmoSQL did not start within ${STARTUP_TIMEOUT_MS}ms (last error: ${detail})`);
 }
 
-const describeIfDocker = isDockerAvailable() ? describe : describe.skip;
+const describeIfDocker = EXTERNAL_SERVER || isDockerAvailable() ? describe : describe.skip;
 
 describeIfDocker('GizmoSQL Integration Tests', () => {
   let client: FlightSQLClient;
@@ -241,11 +256,8 @@ describeIfDocker('GizmoSQL Integration Tests', () => {
   describe('Connection Options', () => {
     it('should connect with tlsSkipVerify', async () => {
       const tlsClient = new FlightSQLClient({
-        host: 'localhost',
-        port: GIZMOSQL_PORT,
+        ...config,
         tlsSkipVerify: true,
-        username: 'gizmosql',
-        password: GIZMOSQL_PASSWORD
       });
 
       try {
@@ -259,10 +271,8 @@ describeIfDocker('GizmoSQL Integration Tests', () => {
 
     it('should handle authentication with username/password', async () => {
       const authClient = new FlightSQLClient({
-        host: 'localhost',
-        port: GIZMOSQL_PORT,
-        tlsSkipVerify: true,
-        username: 'gizmosql',
+        ...config,
+        username: GIZMOSQL_USERNAME,
         password: GIZMOSQL_PASSWORD
       });
 
@@ -374,5 +384,131 @@ describeIfDocker('GizmoSQL Semantics (via the Go driver)', () => {
     await client.execute('UPDATE js_semantics_t SET id = id + 10 WHERE id > 1');
     const rows = await client.execute('SELECT id FROM js_semantics_t ORDER BY id');
     expect(rows.toArray().map((r: any) => Number(r.id))).toEqual([1, 12, 13]);
+  });
+});
+
+describeIfDocker('Parameter binding', () => {
+  let client: FlightSQLClient;
+  const table = 'js_params_t';
+
+  beforeAll(async () => {
+    startGizmoSQL();
+    await waitForGizmoSQL();
+    const setup = new FlightSQLClient(config);
+    try {
+      await setup.execute(`DROP TABLE IF EXISTS ${table}`);
+      await setup.execute(
+        `CREATE TABLE ${table} (id INTEGER, name VARCHAR, score DOUBLE, big BIGINT, ` +
+          'active BOOLEAN, born DATE, seen TIMESTAMP, payload BLOB)'
+      );
+      await setup.execute(`INSERT INTO ${table} (id, name, score) VALUES (1, 'Alice', 1.5), (2, 'Bob', 2.5), (3, 'Carol', 3.5)`);
+    } finally {
+      await setup.close();
+    }
+  }, 60000);
+
+  afterAll(async () => {
+    const cleanup = new FlightSQLClient(config);
+    try {
+      await cleanup.execute(`DROP TABLE IF EXISTS ${table}`);
+    } finally {
+      await cleanup.close();
+    }
+  });
+
+  beforeEach(() => {
+    client = new FlightSQLClient(config);
+  });
+
+  afterEach(async () => {
+    await client.close();
+  });
+
+  it('binds a positional integer parameter in a WHERE clause', async () => {
+    const rows = (await client.execute(`SELECT id, name FROM ${table} WHERE id = ?`, [2])).toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('Bob');
+  });
+
+  it('binds string and numeric parameters together', async () => {
+    const rows = (
+      await client.execute(`SELECT id FROM ${table} WHERE name = ? AND score > ?`, ['Carol', 3])
+    ).toArray();
+    expect(rows.map((r: any) => Number(r.id))).toEqual([3]);
+  });
+
+  it('supports $1-style positional placeholders', async () => {
+    const rows = (await client.execute(`SELECT name FROM ${table} WHERE id = $1`, [1])).toArray();
+    expect(rows[0].name).toBe('Alice');
+  });
+
+  it('inserts every supported JS type and reads it back', async () => {
+    const born = new Date('1990-05-06T00:00:00Z');
+    const seen = new Date('2024-01-02T03:04:05.678Z');
+    const affected = await client.executeUpdate(
+      `INSERT INTO ${table} VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [10, 'Dave', 9.25, 9007199254740993n, true, born, seen, new Uint8Array([1, 2, 3])]
+    );
+    expect(affected).toBe(1);
+
+    const row = (await client.execute(`SELECT * FROM ${table} WHERE id = ?`, [10])).toArray()[0].toJSON();
+    expect(row.name).toBe('Dave');
+    expect(row.score).toBe(9.25);
+    expect(BigInt(row.big)).toBe(9007199254740993n);
+    expect(row.active).toBe(true);
+    expect(Number(row.born)).toBe(born.getTime());
+    expect(Number(row.seen)).toBe(seen.getTime());
+    expect(Array.from(row.payload)).toEqual([1, 2, 3]);
+  });
+
+  it('executeUpdate reports affected rows for parameterized DML', async () => {
+    const updated = await client.executeUpdate(`UPDATE ${table} SET score = ? WHERE id > ?`, [0.5, 1]);
+    expect(updated).toBeGreaterThanOrEqual(2);
+    const deleted = await client.executeUpdate(`DELETE FROM ${table} WHERE id = ?`, [10]);
+    expect(deleted).toBe(1);
+  });
+
+  it('accepts a pre-built one-row Arrow Table', async () => {
+    const params = new Table({
+      id: vectorFromArray([1], new Int32()),
+      name: vectorFromArray(['Alice'], new Utf8()),
+    });
+    const rows = (await client.execute(`SELECT id FROM ${table} WHERE id = ? AND name = ?`, params)).toArray();
+    expect(rows).toHaveLength(1);
+  });
+
+  it('binds parameters on prepared statements, re-executing with new values', async () => {
+    const prepared = await client.prepare(`SELECT name FROM ${table} WHERE id = ?`);
+    try {
+      expect((await client.executePrepared(prepared, [1]))[0].name).toBe('Alice');
+      expect((await client.executePrepared(prepared, [2]))[0].name).toBe('Bob');
+    } finally {
+      await client.closePrepared(prepared);
+    }
+  });
+
+  it('getQuerySchema works with parameters', async () => {
+    const schema = await client.getQuerySchema(`SELECT id, name FROM ${table} WHERE id = ?`, [1]);
+    expect(schema.fields.map((f) => f.name)).toEqual(['id', 'name']);
+  });
+
+  it('rejects a multi-row parameter table client-side', async () => {
+    const params = new Table({ id: vectorFromArray([1, 2], new Int32()) });
+    await expect(client.execute(`SELECT id FROM ${table} WHERE id = ?`, params)).rejects.toThrow(/exactly one row/);
+  });
+
+  it('surfaces a placeholder-count mismatch as a FlightSQLError', async () => {
+    await expect(client.execute(`SELECT id FROM ${table} WHERE id = ?`, [1, 2])).rejects.toThrow(/Failed to execute query/);
+  });
+
+  // GizmoSQL servers up to the current release stringify bound parameters,
+  // so a NULL arrives as the text 'null'. A server fix is in progress; run
+  // with GIZMOSQL_TEST_NULL_PARAMS=1 against a fixed server.
+  const describeIfNullParams = process.env.GIZMOSQL_TEST_NULL_PARAMS === '1' ? describe : describe.skip;
+  describeIfNullParams('null parameters (requires a server that binds Arrow nulls)', () => {
+    it('binds null as SQL NULL', async () => {
+      const rows = (await client.execute('SELECT ?::INTEGER IS NULL AS is_null', [null])).toArray();
+      expect(rows[0].is_null).toBe(true);
+    });
   });
 });

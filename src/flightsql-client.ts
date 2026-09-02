@@ -7,10 +7,17 @@ import {
   AdbcDatabase,
   ObjectDepth,
 } from '@apache-arrow/adbc-driver-manager';
-import { FlightSQLClientConfig, PreparedStatement, SqlInfoValue, TableMetadata } from './types';
-import { FlightSQLError } from './errors';
-import { validateConfig, toClientError } from './utils';
-import { resolveDriverLib } from './driver-lib';
+import {
+  FlightSQLClientConfig,
+  PreparedStatement,
+  SqlInfoValue,
+  SqlParameters,
+  TableMetadata,
+} from './types.js';
+import { FlightSQLError } from './errors.js';
+import { validateConfig, toClientError } from './utils.js';
+import { resolveDriverLib } from './driver-lib.js';
+import { parametersToTable } from './parameters.js';
 
 /**
  * A TypeScript/JavaScript client for GizmoSQL.
@@ -65,7 +72,11 @@ export class FlightSQLClient {
       });
       this.conn = await this.db.connect();
     } catch (error) {
-      await this.close().catch(() => {});
+      try {
+        await this.close();
+      } catch {
+        // best-effort cleanup; the connect error is what matters
+      }
       throw toClientError(error, `Failed to connect to ${this.config.host}:${this.config.port}`);
     }
   }
@@ -82,21 +93,50 @@ export class FlightSQLClient {
    * DDL/DML executes immediately on the server (no fetch required) and
    * `INSERT/UPDATE/DELETE ... RETURNING` rows are returned — both
    * handled inside the Go driver.
+   *
+   * @param query - SQL text, optionally with `?` (or `$1`, `$2`, ...)
+   *   placeholders.
+   * @param params - Values for the placeholders, in order (see
+   *   {@link SqlParameters}). When given, the statement is prepared on
+   *   the server and the values are bound as Arrow data — no SQL string
+   *   interpolation. Omit for plain queries.
    */
-  async execute(query: string): Promise<Table> {
+  async execute(query: string, params?: SqlParameters): Promise<Table> {
     const conn = await this.ensureConn();
+    const bound = parametersToTable(params);
     try {
-      return await conn.query(query);
+      return await conn.query(query, bound);
     } catch (error) {
       throw toClientError(error, 'Failed to execute query', FlightSQLError);
     }
   }
 
-  /** Returns the result schema of a query without materializing rows. */
-  async getQuerySchema(query: string): Promise<Schema> {
+  /**
+   * Executes a statement that produces no result set (INSERT/UPDATE/
+   * DELETE/DDL) and returns the number of affected rows, or -1 when the
+   * server does not report a count.
+   *
+   * @param query - SQL text, optionally with `?` placeholders.
+   * @param params - Values for the placeholders, in order.
+   */
+  async executeUpdate(query: string, params?: SqlParameters): Promise<number> {
     const conn = await this.ensureConn();
+    const bound = parametersToTable(params);
     try {
-      const reader = await conn.queryStream(query);
+      return await conn.execute(query, bound);
+    } catch (error) {
+      throw toClientError(error, 'Failed to execute update', FlightSQLError);
+    }
+  }
+
+  /** Returns the result schema of a query without materializing rows. */
+  async getQuerySchema(query: string, params?: SqlParameters): Promise<Schema> {
+    const conn = await this.ensureConn();
+    const bound = parametersToTable(params);
+    try {
+      const reader = await conn.queryStream(query, bound);
+      // The reader's schema is only populated once the stream is opened.
+      await reader.open();
       const schema = reader.schema;
       if (typeof (reader as { cancel?: () => void }).cancel === 'function') {
         (reader as unknown as { cancel: () => void }).cancel();
@@ -108,7 +148,8 @@ export class FlightSQLClient {
   }
 
   /**
-   * Prepares a statement for repeated execution.
+   * Prepares a statement for repeated execution, optionally with `?`
+   * placeholders to be bound on each {@link executePrepared} call.
    *
    * The returned handle is an opaque client-side identifier (ADBC
    * manages server-side prepared statements internally).
@@ -120,12 +161,18 @@ export class FlightSQLClient {
     return { handle };
   }
 
-  async executePrepared(prepared: PreparedStatement): Promise<any[]> {
+  /**
+   * Executes a prepared statement and returns its rows as plain objects.
+   *
+   * @param prepared - Handle returned by {@link prepare}.
+   * @param params - Values for the statement's placeholders, in order.
+   */
+  async executePrepared(prepared: PreparedStatement, params?: SqlParameters): Promise<any[]> {
     const entry = this.prepared.get(Buffer.from(prepared.handle).toString('hex'));
     if (!entry) {
       throw new FlightSQLError('Unknown prepared statement handle (was it closed?)');
     }
-    const table = await this.execute(entry.sql);
+    const table = await this.execute(entry.sql, params);
     return table.toArray();
   }
 
@@ -358,8 +405,8 @@ export class FlightSQLClient {
     const host = this.config.host;
     for (const scheme of ['https', 'http'] as const) {
       const base = `${scheme}://${host}:${port}`;
-      const ok = await probeOAuthEndpoint(base, this.config.tlsSkipVerify === true);
-      if (ok) return base;
+      const isOk = await probeOAuthEndpoint(base, this.config.tlsSkipVerify === true);
+      if (isOk) return base;
     }
     return null;
   }
@@ -371,10 +418,18 @@ export class FlightSQLClient {
     this.conn = null;
     this.db = null;
     if (conn) {
-      await conn.close().catch(() => {});
+      try {
+        await conn.close();
+      } catch {
+        // already closed / connection lost — nothing left to release
+      }
     }
     if (db) {
-      await db.close().catch(() => {});
+      try {
+        await db.close();
+      } catch {
+        // as above
+      }
     }
   }
 }
@@ -384,7 +439,7 @@ function materialize(value: any): any[] {
   if (value == null) return [];
   if (Array.isArray(value)) return value.map((v) => normalizeRow(v));
   if (typeof value.toArray === 'function') {
-    return Array.from(value.toArray()).map((v) => normalizeRow(v));
+    return Array.from(value, (v) => normalizeRow(v));
   }
   return [];
 }

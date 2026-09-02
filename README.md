@@ -22,8 +22,9 @@ A TypeScript/JavaScript client for [GizmoSQL](https://github.com/gizmodata/gizmo
 - TLS with certificate verification skip option for self-signed certificates
 - Basic authentication (username/password)
 - Bearer token authentication
-- OAuth/SSO URL discovery via Flight handshake
+- OAuth/SSO URL discovery
 - Query execution with Apache Arrow table results
+- Parameter binding (`?` / `$1` placeholders) with typed Arrow values
 - Database metadata operations (catalogs, schemas, tables)
 - Prepared statements support
 
@@ -181,7 +182,70 @@ const table = await client.execute("SELECT * FROM users WHERE active = true");
 
 // Get results as array
 const rows = table.toArray();
+
+// Statements without a result set: returns the affected-row count
+const deleted = await client.executeUpdate("DELETE FROM users WHERE active = false");
 ```
+
+### Parameter Binding
+
+Pass values for `?` (or `$1`, `$2`, ...) placeholders as a second
+argument. They are sent to the server as typed Arrow data through an ADBC
+prepared statement — never interpolated into the SQL text.
+
+```typescript
+// Positional parameters, in placeholder order
+const table = await client.execute(
+  "SELECT id, name FROM users WHERE id = ? AND name = ?",
+  [42, "Alice"]
+);
+
+// DML with parameters; returns the affected-row count
+const inserted = await client.executeUpdate(
+  "INSERT INTO events (id, kind, score, seen_at, payload) VALUES (?, ?, ?, ?, ?)",
+  [7, "login", 0.75, new Date(), new Uint8Array([1, 2, 3])]
+);
+```
+
+JavaScript values map to Arrow types as follows:
+
+| JS value                  | Arrow type sent                    |
+| ------------------------- | ---------------------------------- |
+| `string`                  | Utf8                               |
+| integer `number`          | Int32, or Int64 outside 32-bit     |
+| other `number`            | Float64                            |
+| `bigint`                  | Int64                              |
+| `boolean`                 | Bool                               |
+| `Date`                    | Timestamp (millisecond, UTC)       |
+| `Uint8Array` / `Buffer`   | Binary                             |
+| `null` / `undefined`      | Null                               |
+
+For full control over the Arrow types (decimals, date32, ...), pass a
+one-row `apache-arrow` `Table` with one column per placeholder instead of
+an array:
+
+```typescript
+import { Table, vectorFromArray, Int32, Utf8 } from "apache-arrow";
+
+const params = new Table({
+  id: vectorFromArray([42], new Int32()),
+  name: vectorFromArray(["Alice"], new Utf8()),
+});
+const table = await client.execute(
+  "SELECT id, name FROM users WHERE id = ? AND name = ?",
+  params
+);
+```
+
+Notes:
+
+- GizmoSQL binds one parameter set per execution, so a parameter `Table`
+  must contain exactly one row (use bulk ingest for multi-row loads).
+- A placeholder whose type the server cannot infer from context (e.g.
+  `SELECT ?`) must be cast: `SELECT ?::INTEGER`.
+- `null` parameters and binaries containing NUL bytes require GizmoSQL
+  server >= 1.38.1; older servers convert every bound value through its
+  text form.
 
 ### Database Metadata
 
@@ -216,11 +280,12 @@ const oauthUrl = await client.discoverOAuthUrl();
 ### Prepared Statements
 
 ```typescript
-// Prepare a statement
+// Prepare a statement with placeholders
 const prepared = await client.prepare("SELECT * FROM users WHERE id = ?");
 
-// Execute the prepared statement
-const results = await client.executePrepared(prepared);
+// Execute it repeatedly with different parameter values
+const alice = await client.executePrepared(prepared, [1]);
+const bob = await client.executePrepared(prepared, [2]);
 
 // Close the prepared statement
 await client.closePrepared(prepared);
@@ -251,12 +316,13 @@ console.log(table.schema.fields);
 ## Dependencies
 
 - [`@apache-arrow/adbc-driver-manager`](https://www.npmjs.com/package/@apache-arrow/adbc-driver-manager) — loads the native GizmoSQL driver library
-- [`apache-arrow`](https://www.npmjs.com/package/apache-arrow) — Arrow tables/schemas for results
+- [`apache-arrow`](https://www.npmjs.com/package/apache-arrow) — Arrow tables/schemas for results and bound parameters
 
 The native driver library (`libadbc_driver_gizmosql`) is fetched at
 install time from the pinned
 [gizmosql-adbc release](https://github.com/gizmodata/gizmosql-adbc/releases)
-and verified by SHA-256. Offline/airgapped installs can set
+and verified by SHA-256 (see `driver-manifest.json`; re-pin with
+`node scripts/pin-driver.mjs <version>`). Offline/airgapped installs can set
 `GIZMOSQL_DRIVER_SKIP_DOWNLOAD=1` and point `GIZMOSQL_DRIVER_LIB` at a
 locally built library (`make -C gizmosql-adbc/go lib`).
 
@@ -278,7 +344,9 @@ changes are at the edges:
 
 ## Requirements
 
-- Node.js >= 22
+- Node.js >= 22 (>= 22.12 to `require()` the package from CommonJS)
+- The package is published as ES modules. ESM: `import { FlightSQLClient } from "@gizmodata/gizmosql-client"`.
+  CommonJS: `const { FlightSQLClient } = require("@gizmodata/gizmosql-client")` works on Node >= 22.12.
 
 ## License
 

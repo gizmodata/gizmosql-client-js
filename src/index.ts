@@ -1,4 +1,5 @@
-export { resolveDriverLib, driverPlatform, cachedDriverPath, driverVersion } from './driver-lib';
-export { FlightSQLClient } from './flightsql-client';
-export * from './types';
-export * from './errors';
+export { resolveDriverLib, driverPlatform, cachedDriverPath, driverVersion } from './driver-lib.js';
+export { FlightSQLClient } from './flightsql-client.js';
+export { parametersToTable } from './parameters.js';
+export * from './types.js';
+export * from './errors.js';

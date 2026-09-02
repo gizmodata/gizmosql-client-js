@@ -6,6 +6,7 @@ import baseConfig from './jest.config.js';
 export default {
   ...baseConfig,
   moduleNameMapper: {
+    ...baseConfig.moduleNameMapper,
     '^@apache-arrow/adbc-driver-manager$': '<rootDir>/test/stubs/adbc-driver-manager.ts',
   },
 };

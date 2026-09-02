@@ -9,7 +9,8 @@
 
 import * as fs from 'node:fs';
 import path from 'node:path';
-import { FlightError } from './errors';
+import { fileURLToPath } from 'node:url';
+import { FlightError } from './errors.js';
 
 export interface DriverPlatform {
   /** Release-asset platform key, e.g. "macos_arm64" */
@@ -60,9 +61,11 @@ export function driverPlatform(
  * marker.
  */
 function packageRoot(): string {
-  if (typeof __dirname !== 'undefined') {
-    // <pkg>/dist/driver-lib.js (built) or <pkg>/src/driver-lib.ts.
-    return path.resolve(__dirname, '..');
+  // <pkg>/dist/driver-lib.js (built) or <pkg>/src/driver-lib.ts.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidate = path.resolve(here, '..');
+  if (fs.existsSync(path.join(candidate, 'driver-manifest.json'))) {
+    return candidate;
   }
   let dir = process.cwd();
   for (;;) {

@@ -7,10 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-02
+
+### Added
+- **Parameter binding.** `execute()`, `getQuerySchema()` and
+  `executePrepared()` accept a second `params` argument for `?` (or
+  `$1`, `$2`, ...) placeholders — an array of JS values (`string`,
+  `number`, `bigint`, `boolean`, `Date`, `Uint8Array`/`Buffer`, `null`)
+  or a pre-built one-row Arrow `Table`. Values are sent to the server as
+  typed Arrow data via ADBC prepared statements; no SQL string
+  interpolation. The `parametersToTable()` helper and the
+  `SqlParameterValue` / `SqlParameters` types are exported.
+- `executeUpdate(query, params?)`: runs INSERT/UPDATE/DELETE/DDL and
+  returns the affected-row count.
+- `scripts/pin-driver.mjs <version>`: re-pins `driver-manifest.json` to a
+  gizmosql-adbc release (downloads the six platform tarballs and records
+  their SHA-256s).
+- Integration tests can target an existing server via
+  `GIZMOSQL_TEST_EXTERNAL=1` plus `GIZMOSQL_TEST_HOST` / `_PORT` /
+  `_USERNAME` / `_PASSWORD` / `_PLAINTEXT=1`, instead of starting their
+  own container.
+
 ### Changed
+- **The package is now published as ES modules** (`"type": "module"`).
+  `import { FlightSQLClient } from '@gizmodata/gizmosql-client'` is
+  unchanged; CommonJS callers can `require()` it on Node >= 22.12 (the
+  same floor the ESM-only `@apache-arrow/adbc-driver-manager` already
+  imposes). This fixes parameter binding from the compiled CommonJS
+  build: it loaded the CommonJS copy of `apache-arrow` while the driver
+  manager loaded the ESM copy, and a parameter `Table` built by one copy
+  was mis-serialized by the other (malformed IPC, and in one case a
+  native-addon abort). One `apache-arrow` instance is now shared end to
+  end.
+- Native driver pinned to
+  [gizmosql-adbc v2.0.10](https://github.com/gizmodata/gizmosql-adbc/releases/tag/v2.0.10)
+  (was 2.0.1): required for parameter binding (the driver now prepares
+  automatically on bind), plus server-side query cancellation and the
+  geometry-ingest fix for GizmoSQL >= 1.37.
+- Dev dependencies: ESLint 10 (`@eslint/js` 10, `eslint-plugin-unicorn`
+  74, `typescript-eslint` 8.69, `eslint-plugin-jest` 29.16), Jest 30.5,
+  ts-jest 29.4.12. TypeScript stays on 5.9 until ts-jest and
+  typescript-eslint support 7.x.
 - CI: bumped `actions/checkout` and `actions/setup-node` to v7 and
   `softprops/action-gh-release` to v3 (retiring Node 20-era action
   majors).
+
+### Verified
+- gizmosql-ui (Next.js 16) builds against the packed ESM client with no
+  application changes, and its live connect/query/metadata/OAuth-discovery
+  routes work through `next start` against a GizmoSQL container.
+
+### Removed
+- Leftover gRPC-era dev dependencies (`grpc-tools`,
+  `grpc_tools_node_protoc_ts`, `@types/google-protobuf`) that 2.0 no
+  longer uses.
+
+### Fixed
+- `getQuerySchema()` returned `undefined`: the Arrow stream reader's
+  schema is only populated after the stream is opened.
+- Integration suite: a stopped `gizmosql-test` container left over from
+  an earlier run no longer shadows the live server in the session-close
+  log assertion.
 
 ## [2.0.0] - 2026-07-29
 

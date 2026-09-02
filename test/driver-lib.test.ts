@@ -6,7 +6,7 @@ import {
   driverPlatform,
   driverVersion,
   resolveDriverLib,
-} from '../src/driver-lib';
+} from '../src/driver-lib.js';
 
 describe('driverPlatform', () => {
   it.each([

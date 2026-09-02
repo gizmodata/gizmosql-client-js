@@ -1,10 +1,10 @@
-import { createConnectionString, validateConfig, toClientError } from '../src/utils';
+import { createConnectionString, validateConfig, toClientError } from '../src/utils.js';
 import {
   AuthenticationError,
   ConnectionError,
   FlightError,
   FlightSQLError,
-} from '../src/errors';
+} from '../src/errors.js';
 
 describe('createConnectionString', () => {
   it('builds https URLs by default', () => {
