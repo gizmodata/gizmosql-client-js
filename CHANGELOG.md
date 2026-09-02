@@ -41,16 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   end.
 - Native driver pinned to
   [gizmosql-adbc v2.0.10](https://github.com/gizmodata/gizmosql-adbc/releases/tag/v2.0.10)
-  (was 2.0.1): required for parameter binding (the driver now prepares
+  (was 2.0.8): required for parameter binding (the driver now prepares
   automatically on bind), plus server-side query cancellation and the
   geometry-ingest fix for GizmoSQL >= 1.37.
 - Dev dependencies: ESLint 10 (`@eslint/js` 10, `eslint-plugin-unicorn`
   74, `typescript-eslint` 8.69, `eslint-plugin-jest` 29.16), Jest 30.5,
   ts-jest 29.4.12. TypeScript stays on 5.9 until ts-jest and
   typescript-eslint support 7.x.
-- CI: bumped `actions/checkout` and `actions/setup-node` to v7 and
-  `softprops/action-gh-release` to v3 (retiring Node 20-era action
-  majors).
 
 ### Verified
 - gizmosql-ui (Next.js 16) builds against the packed ESM client with no
@@ -68,6 +65,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration suite: a stopped `gizmosql-test` container left over from
   an earlier run no longer shadows the live server in the session-close
   log assertion.
+
+## [2.0.1] - 2026-08-24
+
+### Changed
+- **Bundled native driver bumped to `gizmosql-adbc` v2.0.8** (was v2.0.1) —
+  the postinstall download now fetches the v2.0.8 release assets (hashes
+  refreshed in `driver-manifest.json`). v2.0.8 fixes geometry-aware bulk
+  ingest against GizmoSQL ≥ 1.37.0, which creates `GEOMETRY` columns
+  server-side; earlier driver builds failed there with
+  `No function matches 'st_geomfromwkb(GEOMETRY)'`.
+- CI: bumped `actions/checkout` and `actions/setup-node` to v7 and
+  `softprops/action-gh-release` to v3 (retiring Node 20-era action
+  majors).
 
 ## [2.0.0] - 2026-07-29
 
