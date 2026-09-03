@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-03
+
 ### Added
 - `executeStream(query, params?)`: returns a `QueryStream` — an async
   iterable of Arrow `RecordBatch`es with the result `schema`, `cancel()`,
@@ -37,8 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `execute()` / `executeUpdate()` now run on an explicitly managed ADBC
   statement (needed for cancellation) instead of the driver manager's
   `conn.query()` / `conn.execute()`; results and errors are unchanged.
-- Bundled native driver bumped to `gizmosql-adbc` v2.0.11 (was v2.0.10);
-  hashes refreshed in `driver-manifest.json`.
+- Bundled native driver bumped to `gizmosql-adbc` v2.0.12 (was v2.0.10);
+  hashes refreshed in `driver-manifest.json`. 2.0.12 cancels an in-flight
+  update when the statement is released.
 
 ## [2.1.0] - 2026-09-02
 
