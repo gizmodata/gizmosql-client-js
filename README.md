@@ -271,12 +271,14 @@ const pending = client.execute("SELECT ... FROM huge", undefined, { signal: cont
 stopButton.onclick = () => controller.abort();
 ```
 
-Cancellation applies to *queries*. `executeUpdate()` only honors a signal
-that is already aborted when it is called: the native driver does not yet
-cancel an in-flight Flight SQL `DoPut` update when the statement is
-released (GizmoSQL does interrupt updates whose client disconnects), so a
-running INSERT/UPDATE/DELETE/DDL completes and its affected-row count is
-returned.
+`executeUpdate()` honors a signal that is already aborted when it is
+called. An abort *during* a running INSERT/UPDATE/DELETE/DDL cannot reach
+the driver yet: `@apache-arrow/adbc-driver-manager` (0.24) releases the
+native statement only after the blocking update returns, so the statement
+completes and its affected-row count is returned. (The bundled
+gizmosql-adbc >= 2.0.12 does cancel an in-flight update when the statement
+is released, so this resolves once the Node.js driver manager exposes
+cancellation or releases the handle eagerly.)
 
 Server-side alternative, which covers DML/DDL too: `SET gizmosql.query_timeout
 = <seconds>` on the session makes GizmoSQL interrupt any statement running

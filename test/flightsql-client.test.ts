@@ -388,11 +388,21 @@ describe('executeStream / execute / QueryStream (fake ADBC statement)', () => {
       expect(stream.done).toBe(true);
     });
 
-    it('executeUpdate ignores an abort that arrives mid-flight (DoPut has no cancel) and returns the count', async () => {
+    it('executeUpdate honors the signal: closing the statement interrupts the update', async () => {
+      const conn = fakeConn(makeTable(1), { hang: true });
+      const controller = new AbortController();
+      const pending = clientWith(conn).executeUpdate('DELETE FROM huge', undefined, { signal: controller.signal });
+      await new Promise(r => setTimeout(r, 20));
+      controller.abort();
+      await expect(pending).rejects.toBeInstanceOf(QueryCancelledError);
+      expect(conn.stmt.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('executeUpdate returns the count when an older driver lets the update finish despite the abort', async () => {
       const conn = fakeConn(makeTable(1), { affected: 7 });
       const controller = new AbortController();
       conn.stmt.executeUpdate.mockImplementation(async () => {
-        controller.abort();
+        controller.abort(); // close() is a no-op for the update on old drivers
         return 7;
       });
       await expect(

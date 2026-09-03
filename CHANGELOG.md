@@ -24,9 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fetching releases the result stream. The call rejects with the new
   `QueryCancelledError` (carries the abort `reason`).
   `AbortSignal.timeout(ms)` gives a client-side deadline. `executeUpdate()`
-  honors an already-aborted signal only: the native driver does not yet
-  cancel an in-flight `DoPut` update on statement release, so bound DML/DDL
-  with `SET gizmosql.query_timeout`.
+  honors an already-aborted signal; an abort during a running DML/DDL
+  statement cannot reach the driver through the Node.js ADBC driver
+  manager (0.24 releases the statement only after the update returns), so
+  the update completes — bound DML/DDL with `SET gizmosql.query_timeout`.
 - `oauthPort` documented in the README connection options.
 - Integration tests for cancellation during execution and fetch,
   `AbortSignal.timeout`, `SET gizmosql.query_timeout`, and the server

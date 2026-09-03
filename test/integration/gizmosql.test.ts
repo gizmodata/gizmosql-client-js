@@ -700,10 +700,9 @@ describeIfDocker('Cancellation and timeouts', () => {
     expect((await client.execute('SELECT 4 AS ok')).toArray()[0].ok).toBe(4);
   }, 30000);
 
-  it('executeUpdate cannot be interrupted mid-flight (DoPut): the statement completes', async () => {
+  it('an abort during executeUpdate cannot interrupt it yet (driver manager defers the release)', async () => {
     await client.executeUpdate('DROP TABLE IF EXISTS ctas_not_cancelled');
     const controller = new AbortController();
-    // Long enough to still be running when the abort fires, short enough for a test.
     const pending = client.executeUpdate(
       'CREATE TABLE ctas_not_cancelled AS SELECT count(*) AS n FROM range(2000000000)',
       undefined,
@@ -711,9 +710,11 @@ describeIfDocker('Cancellation and timeouts', () => {
     );
     await new Promise(r => setTimeout(r, 200));
     controller.abort();
+    // Documented limitation of @apache-arrow/adbc-driver-manager <= 0.24:
+    // the statement is released only after the update returns, so the
+    // update completes and its count comes back.
     await expect(pending).resolves.toBeGreaterThanOrEqual(0);
-    const tables = await client.getTables(undefined, undefined, 'ctas_not_cancelled');
-    expect(tables).toHaveLength(1);
+    expect(await client.getTables(undefined, undefined, 'ctas_not_cancelled')).toHaveLength(1);
     await client.executeUpdate('DROP TABLE ctas_not_cancelled');
   }, 60000);
 

@@ -194,17 +194,18 @@ export class FlightSQLClient {
    * DELETE/DDL) and returns the number of affected rows, or -1 when the
    * server does not report a count.
    *
-   * `options.signal` is honored before execution starts (an already
-   * aborted signal rejects with {@link QueryCancelledError}). A statement
-   * that is already running is not interrupted: the native driver does not
-   * yet cancel an in-flight Flight SQL `DoPut` update when the statement
-   * is released (GizmoSQL itself interrupts updates whose client goes
-   * away), so the statement completes and its count is returned. Bound
-   * DML/DDL execution time with the server's `SET gizmosql.query_timeout`.
+   * Aborting `options.signal` while the statement runs closes the ADBC
+   * statement, which gizmosql-adbc >= 2.0.12 relays as a Flight SQL
+   * cancel (GizmoSQL >= 1.38.0 then interrupts the update and the call
+   * rejects with {@link QueryCancelledError}). Caveat: the Node.js
+   * `@apache-arrow/adbc-driver-manager` (<= 0.24) only releases the native
+   * statement after the blocking update task returns, so through this
+   * client a running DML/DDL statement currently completes and its count
+   * is returned; bound it with the server's `SET gizmosql.query_timeout`.
    *
    * @param query - SQL text, optionally with `?` placeholders.
    * @param params - Values for the placeholders, in order.
-   * @param options - see {@link ExecuteOptions}.
+   * @param options - `signal` cancels the statement (see {@link ExecuteOptions}).
    */
   async executeUpdate(
     query: string,
@@ -218,6 +219,12 @@ export class FlightSQLClient {
     const conn = await this.ensureConn();
     const bound = parametersToTable(params);
     const stmt: AdbcStatement = await conn.createStatement();
+    let cancelled = false;
+    const onAbort = () => {
+      cancelled = true;
+      void closeQuietly(stmt);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
       await stmt.setSqlQuery(query);
       if (bound !== undefined) {
@@ -225,9 +232,15 @@ export class FlightSQLClient {
       }
       return await stmt.executeUpdate();
     } catch (error) {
+      if (cancelled || signal?.aborted) {
+        throw new QueryCancelledError('Query cancelled', signal?.reason);
+      }
       throw toClientError(error, 'Failed to execute update', FlightSQLError);
     } finally {
-      await closeQuietly(stmt);
+      signal?.removeEventListener('abort', onAbort);
+      if (!cancelled) {
+        await closeQuietly(stmt);
+      }
     }
   }
 

@@ -34,11 +34,11 @@ export interface ExecuteOptions {
    * released. The call then rejects with `QueryCancelledError`.
    * `AbortSignal.timeout(ms)` gives a client-side deadline.
    *
-   * For `executeUpdate()` only an already-aborted signal is honored (the
-   * call rejects before running): the native driver does not yet cancel an
-   * in-flight `DoPut` update when the statement is released (the server
-   * does interrupt on disconnect), so bound DML/DDL with
-   * `SET gizmosql.query_timeout` for now.
+   * `executeUpdate()` honors an already-aborted signal; an abort during a
+   * running DML/DDL statement cannot reach the driver yet (the Node.js
+   * ADBC driver manager releases the statement only after the update
+   * returns), so the update completes and its count is returned — use
+   * `SET gizmosql.query_timeout` to bound DML/DDL.
    */
   signal?: AbortSignal;
 }
