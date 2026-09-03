@@ -1,11 +1,11 @@
 {
-  "version": "2.0.10",
+  "version": "2.0.11",
   "sha256": {
-    "macos_arm64": "405263a73ff39cbb4a59168018ad459f52ff62ca8cf2ca3d8bd3c94bedb82267",
-    "macos_amd64": "5b8ad0fdc42b21d08a178baefa36dfa89e1964700fd682ec3a41dbfe8f7977ff",
-    "linux_amd64": "bc33eb5c50bd82c784c30104a6e6572bf40176726b1b6a91b6713dc59bc0409f",
-    "linux_arm64": "22c745b5fcf4349e73ba09d2e714b3a2ef43c850f2c839b46d313691d24b5328",
-    "windows_amd64": "3e242bd0576d3b4bb24ab43370285e20b9f2884ccabd35c1d62471225cea5734",
-    "windows_arm64": "8ce1a13697bef7e33dfdcfa22717807fb16ca71e61dfb1996929a8cba31fa7ed"
+    "macos_arm64": "c7e5ec44426b14d652668618672d2ad8066b3fa6f873a96162280c894ffd1131",
+    "macos_amd64": "2414d3ed2cc006776b44328ab831c64c3a55790201d6bcfe7fc16ee348eb4ad6",
+    "linux_amd64": "ba6a464e4590d157a6625e9a9ff1cdbcf7b1a159cfc766a374bdc35f7d32fdb9",
+    "linux_arm64": "7d22f92ccebc0df8685d160321ab00b48494f6345ec7f3e012d4691e3aeb6f5b",
+    "windows_amd64": "1dd7ebf86c28ba288a288726396457cd8c6bd47fd027b5e411e7082d3c2d0270",
+    "windows_arm64": "0dbde2fd8cad9f887fba1d084b0505dec0861d94ad2f3fe56c97fe72de29d3ae"
   }
 }
