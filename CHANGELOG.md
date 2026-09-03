@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `executeStream(query, params?)`: returns a `QueryStream` — an async
+  iterable of Arrow `RecordBatch`es with the result `schema`, `cancel()`,
+  `done`, and `toTable()`. Batches are pulled lazily; breaking out of the
+  loop (or `cancel()`) releases the server-side stream and the client
+  stays usable. `QueryStream` is exported.
+- `adbcOptions` connection option: extra ADBC database options passed to
+  the native driver after (and overriding) the derived ones — e.g. call
+  headers, custom root certificates, or `adbc.gizmosql.auth_type`.
+- **Query cancellation.** `execute()`, `executeStream()` and
+  `executeUpdate()` accept `{ signal: AbortSignal }` (`ExecuteOptions`).
+  For queries, aborting while the server is executing closes the ADBC
+  statement, which the Go driver relays as a Flight SQL cancel and
+  GizmoSQL >= 1.38.0 turns into a DuckDB interrupt; aborting while
+  fetching releases the result stream. The call rejects with the new
+  `QueryCancelledError` (carries the abort `reason`).
+  `AbortSignal.timeout(ms)` gives a client-side deadline. `executeUpdate()`
+  honors an already-aborted signal only: the native driver does not yet
+  cancel an in-flight `DoPut` update on statement release, so bound DML/DDL
+  with `SET gizmosql.query_timeout`.
+- `oauthPort` documented in the README connection options.
+- Integration tests for cancellation during execution and fetch,
+  `AbortSignal.timeout`, `SET gizmosql.query_timeout`, and the server
+  interrupting statements of killed clients (asserted via server logs).
+
+### Changed
+- `execute()` / `executeUpdate()` now run on an explicitly managed ADBC
+  statement (needed for cancellation) instead of the driver manager's
+  `conn.query()` / `conn.execute()`; results and errors are unchanged.
+- Bundled native driver bumped to `gizmosql-adbc` v2.0.11 (was v2.0.10);
+  hashes refreshed in `driver-manifest.json`.
+
 ## [2.1.0] - 2026-09-02
 
 ### Added

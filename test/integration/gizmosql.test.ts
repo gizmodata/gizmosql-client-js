@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import { FlightSQLClient } from '../../src/flightsql-client.js';
 import { FlightSQLClientConfig } from '../../src/types.js';
+import { QueryCancelledError } from '../../src/errors.js';
 import { Table, vectorFromArray, Int32, Utf8 } from 'apache-arrow';
 
 // By default the suite starts its own TLS-enabled GizmoSQL container. To
@@ -511,4 +512,260 @@ describeIfDocker('Parameter binding', () => {
       expect(rows[0].is_null).toBe(true);
     });
   });
+});
+
+describeIfDocker('Streaming results (executeStream)', () => {
+  let client: FlightSQLClient;
+
+  beforeAll(async () => {
+    if (!process.env.CI) {
+      startGizmoSQL();
+    }
+    await waitForGizmoSQL();
+  }, 60000);
+
+  beforeEach(() => {
+    client = new FlightSQLClient(config);
+  });
+
+  afterEach(async () => {
+    await client.close();
+  });
+
+  it('streams a multi-batch result incrementally', async () => {
+    const stream = await client.executeStream(
+      'SELECT range AS i, \'v\' || range AS s FROM range(100000)'
+    );
+    expect(stream.schema.fields.map(f => f.name)).toEqual(['i', 's']);
+    let batches = 0;
+    let rows = 0;
+    for await (const batch of stream) {
+      batches++;
+      rows += batch.numRows;
+    }
+    expect(batches).toBeGreaterThan(1);
+    expect(rows).toBe(100000);
+    expect(stream.done).toBe(true);
+  });
+
+  it('breaking out early releases the stream and keeps the client usable', async () => {
+    const stream = await client.executeStream('SELECT range AS i FROM range(5000000)');
+    let seen = 0;
+    for await (const batch of stream) {
+      seen += batch.numRows;
+      if (seen >= 1) break;
+    }
+    expect(seen).toBeGreaterThan(0);
+    expect(seen).toBeLessThan(5000000);
+    expect(stream.done).toBe(true);
+    const after = await client.execute('SELECT 42 AS answer');
+    expect(after.toArray()[0].answer).toBe(42);
+  });
+
+  it('cancel() before iterating is safe and the client stays usable', async () => {
+    const stream = await client.executeStream('SELECT range AS i FROM range(1000000)');
+    await stream.cancel();
+    let seen = 0;
+    for await (const _batch of stream) {
+      seen++;
+    }
+    expect(seen).toBe(0);
+    expect((await client.execute('SELECT 1 AS ok')).toArray()[0].ok).toBe(1);
+  });
+
+  it('binds parameters and toTable() materializes the rest', async () => {
+    const stream = await client.executeStream('SELECT range AS i FROM range(?::BIGINT)', [10]);
+    const table = await stream.toTable();
+    expect(table.numRows).toBe(10);
+    expect(Number(table.toArray()[9].i)).toBe(9);
+  });
+
+  it('surfaces server errors from the execute phase as FlightSQLError', async () => {
+    await expect(client.executeStream('SELECT * FROM no_such_table_stream')).rejects.toThrow(
+      /no_such_table_stream/
+    );
+    expect((await client.execute('SELECT 1 AS ok')).toArray()[0].ok).toBe(1);
+  });
+
+  it('accepts extra driver options via adbcOptions', async () => {
+    const custom = new FlightSQLClient({
+      ...config,
+      adbcOptions: { 'adbc.flight.sql.rpc.call_header.x-gizmosql-client-test': 'streaming' },
+    });
+    try {
+      expect((await custom.execute('SELECT 1 AS ok')).toArray()[0].ok).toBe(1);
+    } finally {
+      await custom.close();
+    }
+  });
+});
+
+/**
+ * Server log lines mentioning `marker` (a literal embedded in the SQL under
+ * test). Returns null when the server container cannot be found (e.g. an
+ * external server without Docker access), in which case log assertions are
+ * skipped and only the client-visible behavior is checked.
+ */
+function serverLogLines(marker: string): string[] | null {
+  const container = process.env.GIZMOSQL_TEST_CONTAINER ?? resolveServerContainer();
+  if (!container) return null;
+  try {
+    const out = execSync(`docker logs --since 120s ${container} 2>&1`, { encoding: 'utf-8' });
+    return out.split('\n').filter(line => line.includes(marker));
+  } catch {
+    return null;
+  }
+}
+
+// A query that keeps DuckDB busy for a long time (minutes) but is cheap to
+// plan; `marker` makes its server log lines identifiable.
+const slowQuery = (marker: string) =>
+  `SELECT count(*) AS n, '${marker}' AS marker FROM range(300000000000)`;
+
+describeIfDocker('Cancellation and timeouts', () => {
+  let client: FlightSQLClient;
+
+  beforeAll(async () => {
+    if (!process.env.CI) {
+      startGizmoSQL();
+    }
+    await waitForGizmoSQL();
+  }, 60000);
+
+  beforeEach(() => {
+    client = new FlightSQLClient(config);
+  });
+
+  afterEach(async () => {
+    await client.close();
+  });
+
+  it('aborting the signal cancels a statement the server is still executing', async () => {
+    const marker = `abort-exec-${Date.now()}`;
+    const controller = new AbortController();
+    const started = Date.now();
+    const pending = client.execute(slowQuery(marker), undefined, { signal: controller.signal });
+    await new Promise(r => setTimeout(r, 1000));
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(Date.now() - started).toBeLessThan(10000);
+
+    // The same client is immediately usable again.
+    expect((await client.execute('SELECT 1 AS ok')).toArray()[0].ok).toBe(1);
+
+    // And the server actually interrupted the statement (GizmoSQL >= 1.38.0).
+    await new Promise(r => setTimeout(r, 1000));
+    const lines = serverLogLines(marker);
+    if (lines !== null) {
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.some(l => /interrupt/i.test(l))).toBe(true);
+    }
+  }, 30000);
+
+  it('AbortSignal.timeout() gives a client-side deadline', async () => {
+    const marker = `abort-timeout-${Date.now()}`;
+    const started = Date.now();
+    await expect(
+      client.execute(slowQuery(marker), undefined, { signal: AbortSignal.timeout(1000) })
+    ).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect((await client.execute('SELECT 2 AS ok')).toArray()[0].ok).toBe(2);
+  }, 30000);
+
+  it('executeStream honors the signal during execution', async () => {
+    const marker = `abort-stream-${Date.now()}`;
+    await expect(
+      client.executeStream(slowQuery(marker), undefined, { signal: AbortSignal.timeout(1000) })
+    ).rejects.toBeInstanceOf(QueryCancelledError);
+    expect((await client.execute('SELECT 3 AS ok')).toArray()[0].ok).toBe(3);
+  }, 30000);
+
+  it('aborting while fetching stops the stream with QueryCancelledError', async () => {
+    const controller = new AbortController();
+    const stream = await client.executeStream(
+      'SELECT range AS i FROM range(20000000)',
+      undefined,
+      { signal: controller.signal }
+    );
+    let batches = 0;
+    await expect((async () => {
+      for await (const _batch of stream) {
+        batches++;
+        if (batches === 2) controller.abort();
+      }
+    })()).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(batches).toBeGreaterThanOrEqual(2);
+    expect(batches).toBeLessThan(1000);
+    expect(stream.done).toBe(true);
+    expect((await client.execute('SELECT 4 AS ok')).toArray()[0].ok).toBe(4);
+  }, 30000);
+
+  it('executeUpdate cannot be interrupted mid-flight (DoPut): the statement completes', async () => {
+    await client.executeUpdate('DROP TABLE IF EXISTS ctas_not_cancelled');
+    const controller = new AbortController();
+    // Long enough to still be running when the abort fires, short enough for a test.
+    const pending = client.executeUpdate(
+      'CREATE TABLE ctas_not_cancelled AS SELECT count(*) AS n FROM range(2000000000)',
+      undefined,
+      { signal: controller.signal }
+    );
+    await new Promise(r => setTimeout(r, 200));
+    controller.abort();
+    await expect(pending).resolves.toBeGreaterThanOrEqual(0);
+    const tables = await client.getTables(undefined, undefined, 'ctas_not_cancelled');
+    expect(tables).toHaveLength(1);
+    await client.executeUpdate('DROP TABLE ctas_not_cancelled');
+  }, 60000);
+
+  it('executeUpdate rejects an already-aborted signal before running', async () => {
+    await expect(
+      client.executeUpdate('CREATE TABLE never_created (id INT)', undefined, { signal: AbortSignal.abort() })
+    ).rejects.toBeInstanceOf(QueryCancelledError);
+    expect(await client.getTables(undefined, undefined, 'never_created')).toHaveLength(0);
+  });
+
+  it('a pre-aborted signal rejects without running anything', async () => {
+    await expect(
+      client.execute('SELECT 1', undefined, { signal: AbortSignal.abort() })
+    ).rejects.toBeInstanceOf(QueryCancelledError);
+  });
+
+  it('SET gizmosql.query_timeout interrupts long statements server-side and the session stays usable', async () => {
+    const marker = `server-timeout-${Date.now()}`;
+    await client.executeUpdate('SET gizmosql.query_timeout = 1');
+    const started = Date.now();
+    await expect(client.execute(slowQuery(marker))).rejects.toThrow(/timed out/i);
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect((await client.execute('SELECT 5 AS ok')).toArray()[0].ok).toBe(5);
+    await client.executeUpdate('SET gizmosql.query_timeout = 0');
+
+    const lines = serverLogLines(marker);
+    if (lines !== null) {
+      expect(lines.some(l => /status=timeout/i.test(l))).toBe(true);
+    }
+  }, 30000);
+
+  it('a killed client process makes the server interrupt its statement', async () => {
+    const marker = `kill9-${Date.now()}`;
+    const { spawn } = await import('node:child_process');
+    const script = `
+      import('${new URL('../../dist/index.js', import.meta.url).href}').then(async ({ FlightSQLClient }) => {
+        const c = new FlightSQLClient(${JSON.stringify(config)});
+        await c.execute(${JSON.stringify(slowQuery(marker))});
+      });
+    `;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      stdio: 'ignore',
+      env: { ...process.env, GIZMOSQL_DRIVER_LIB: process.env.GIZMOSQL_DRIVER_LIB ?? '' },
+    });
+    await new Promise(r => setTimeout(r, 2500));
+    child.kill('SIGKILL');
+    await new Promise(r => setTimeout(r, 3000));
+    const lines = serverLogLines(marker);
+    if (lines === null) {
+      console.warn('server container not reachable; skipping log assertion');
+      return;
+    }
+    expect(lines.some(l => /client_disconnected|went away/i.test(l))).toBe(true);
+  }, 30000);
 });

@@ -10,9 +10,38 @@ export interface FlightClientConfig {
   token?: string;
   /** OAuth HTTP port probed by discoverOAuthUrl() (default 31339). */
   oauthPort?: number;
+  /**
+   * Additional ADBC database options passed straight to the native
+   * GizmoSQL driver, applied after (and overriding) the options derived
+   * from the fields above. Examples: Flight SQL RPC deadlines such as
+   * `"adbc.flight.sql.rpc.timeout_seconds.query": "60"`, or the driver's
+   * OAuth/SSO flow via `"adbc.gizmosql.auth_type": "external"`. See the
+   * gizmosql-adbc README for the full list.
+   */
+  adbcOptions?: Record<string, string>;
 }
 
 export type FlightSQLClientConfig = FlightClientConfig;
+
+/** Per-call options for `execute()`, `executeStream()` and `executeUpdate()`. */
+export interface ExecuteOptions {
+  /**
+   * Cancels the statement when aborted. For queries (`execute()` /
+   * `executeStream()`): while the server is still executing, the
+   * underlying ADBC statement is closed, which the Go driver relays as a
+   * Flight SQL cancel and GizmoSQL (>= 1.38.0) turns into a DuckDB
+   * interrupt; while rows are being fetched, the result stream is
+   * released. The call then rejects with `QueryCancelledError`.
+   * `AbortSignal.timeout(ms)` gives a client-side deadline.
+   *
+   * For `executeUpdate()` only an already-aborted signal is honored (the
+   * call rejects before running): the native driver does not yet cancel an
+   * in-flight `DoPut` update when the statement is released (the server
+   * does interrupt on disconnect), so bound DML/DDL with
+   * `SET gizmosql.query_timeout` for now.
+   */
+  signal?: AbortSignal;
+}
 
 /**
  * A single query parameter value. Mapped to Arrow types as follows:

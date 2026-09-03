@@ -1,20 +1,22 @@
 import { randomBytes } from 'node:crypto';
 import * as http from 'node:http';
 import * as https from 'node:https';
-import { Schema, Table } from 'apache-arrow';
+import { RecordBatch, RecordBatchReader, Schema, Table } from 'apache-arrow';
 import {
   AdbcConnection,
   AdbcDatabase,
+  AdbcStatement,
   ObjectDepth,
 } from '@apache-arrow/adbc-driver-manager';
 import {
+  ExecuteOptions,
   FlightSQLClientConfig,
   PreparedStatement,
   SqlInfoValue,
   SqlParameters,
   TableMetadata,
 } from './types.js';
-import { FlightSQLError } from './errors.js';
+import { FlightSQLError, QueryCancelledError } from './errors.js';
 import { validateConfig, toClientError } from './utils.js';
 import { resolveDriverLib } from './driver-lib.js';
 import { parametersToTable } from './parameters.js';
@@ -60,7 +62,8 @@ export class FlightSQLClient {
       options.username = this.config.username;
       options.password = this.config.password;
     }
-    return options;
+    // Caller-supplied driver options win over the derived ones.
+    return { ...options, ...this.config.adbcOptions };
   }
 
   async connect(): Promise<void> {
@@ -89,6 +92,56 @@ export class FlightSQLClient {
   }
 
   /**
+   * Runs `query` on a fresh ADBC statement and returns the opened result
+   * reader. Holding the statement handle (rather than using the driver
+   * manager's `conn.query()`) is what makes cancellation possible: closing
+   * the statement while the server is executing cancels the Flight SQL
+   * call, and GizmoSQL interrupts the running statement.
+   */
+  private async openReader(
+    query: string,
+    params: SqlParameters | undefined,
+    options: ExecuteOptions | undefined,
+    context: string
+  ): Promise<RecordBatchReader> {
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      throw new QueryCancelledError('Query cancelled before execution', signal.reason);
+    }
+    const conn = await this.ensureConn();
+    const bound = parametersToTable(params);
+    const stmt = await conn.createStatement();
+    let cancelled = false;
+    const onAbort = () => {
+      cancelled = true;
+      // Closing the statement cancels the in-flight execution.
+      void closeQuietly(stmt);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      await stmt.setSqlQuery(query);
+      if (bound !== undefined) {
+        await stmt.bind(bound);
+      }
+      const reader = await stmt.executeQuery();
+      await reader.open();
+      return reader;
+    } catch (error) {
+      if (cancelled || signal?.aborted) {
+        throw new QueryCancelledError('Query cancelled', signal?.reason);
+      }
+      throw toClientError(error, context, FlightSQLError);
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      if (!cancelled) {
+        // The result stream stays valid after the statement is released
+        // (the driver manager does the same in conn.query()).
+        await closeQuietly(stmt);
+      }
+    }
+  }
+
+  /**
    * Executes a SQL query and returns the Arrow result table.
    * DDL/DML executes immediately on the server (no fetch required) and
    * `INSERT/UPDATE/DELETE ... RETURNING` rows are returned — both
@@ -100,15 +153,40 @@ export class FlightSQLClient {
    *   {@link SqlParameters}). When given, the statement is prepared on
    *   the server and the values are bound as Arrow data — no SQL string
    *   interpolation. Omit for plain queries.
+   * @param options - `signal` cancels the statement (see
+   *   {@link ExecuteOptions}); e.g. `{ signal: AbortSignal.timeout(30_000) }`.
    */
-  async execute(query: string, params?: SqlParameters): Promise<Table> {
-    const conn = await this.ensureConn();
-    const bound = parametersToTable(params);
-    try {
-      return await conn.query(query, bound);
-    } catch (error) {
-      throw toClientError(error, 'Failed to execute query', FlightSQLError);
-    }
+  async execute(query: string, params?: SqlParameters, options?: ExecuteOptions): Promise<Table> {
+    const stream = await this.executeStream(query, params, options);
+    return stream.toTable();
+  }
+
+  /**
+   * Executes a SQL query and returns its result as a stream of Arrow
+   * record batches instead of one materialized table, so large results
+   * can be consumed incrementally and abandoned early.
+   *
+   * The returned {@link QueryStream} is an `AsyncIterable<RecordBatch>`;
+   * `schema` is available immediately. Breaking out of a `for await`
+   * loop (or calling `cancel()`) releases the server-side stream, and the
+   * client stays usable for further queries.
+   *
+   * The promise resolves once the server has executed the statement; pass
+   * `options.signal` to cancel during execution (the server interrupts the
+   * statement) or while fetching. An aborted signal makes the pending call
+   * — or the iteration — reject with {@link QueryCancelledError}.
+   *
+   * @param query - SQL text, optionally with `?` / `$1` placeholders.
+   * @param params - Values for the placeholders, in order.
+   * @param options - `signal` cancels the statement (see {@link ExecuteOptions}).
+   */
+  async executeStream(
+    query: string,
+    params?: SqlParameters,
+    options?: ExecuteOptions
+  ): Promise<QueryStream> {
+    const reader = await this.openReader(query, params, options, 'Failed to execute query');
+    return new QueryStream(reader, options?.signal);
   }
 
   /**
@@ -116,16 +194,40 @@ export class FlightSQLClient {
    * DELETE/DDL) and returns the number of affected rows, or -1 when the
    * server does not report a count.
    *
+   * `options.signal` is honored before execution starts (an already
+   * aborted signal rejects with {@link QueryCancelledError}). A statement
+   * that is already running is not interrupted: the native driver does not
+   * yet cancel an in-flight Flight SQL `DoPut` update when the statement
+   * is released (GizmoSQL itself interrupts updates whose client goes
+   * away), so the statement completes and its count is returned. Bound
+   * DML/DDL execution time with the server's `SET gizmosql.query_timeout`.
+   *
    * @param query - SQL text, optionally with `?` placeholders.
    * @param params - Values for the placeholders, in order.
+   * @param options - see {@link ExecuteOptions}.
    */
-  async executeUpdate(query: string, params?: SqlParameters): Promise<number> {
+  async executeUpdate(
+    query: string,
+    params?: SqlParameters,
+    options?: ExecuteOptions
+  ): Promise<number> {
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      throw new QueryCancelledError('Query cancelled before execution', signal.reason);
+    }
     const conn = await this.ensureConn();
     const bound = parametersToTable(params);
+    const stmt: AdbcStatement = await conn.createStatement();
     try {
-      return await conn.execute(query, bound);
+      await stmt.setSqlQuery(query);
+      if (bound !== undefined) {
+        await stmt.bind(bound);
+      }
+      return await stmt.executeUpdate();
     } catch (error) {
       throw toClientError(error, 'Failed to execute update', FlightSQLError);
+    } finally {
+      await closeQuietly(stmt);
     }
   }
 
@@ -431,6 +533,112 @@ export class FlightSQLClient {
         // as above
       }
     }
+  }
+}
+
+/**
+ * Incremental query result returned by {@link FlightSQLClient.executeStream}:
+ * an `AsyncIterable` of Arrow `RecordBatch`es plus the result `schema`.
+ *
+ * ```ts
+ * const stream = await client.executeStream('SELECT * FROM big_table');
+ * for await (const batch of stream) {
+ *   process(batch);
+ *   if (enough) break; // releases the stream; the client stays usable
+ * }
+ * ```
+ *
+ * Batches are pulled from the server lazily as you iterate. Leaving the
+ * loop early (break/return/throw) or calling {@link cancel} releases the
+ * server-side stream so no further batches are transferred.
+ */
+export class QueryStream implements AsyncIterable<RecordBatch> {
+  private released = false;
+  private abortReason: unknown = undefined;
+  private abortedBySignal = false;
+  private readonly onAbort = () => {
+    this.abortedBySignal = true;
+    this.abortReason = this.signal?.reason;
+    void this.cancel();
+  };
+
+  /** @internal */
+  constructor(
+    private readonly reader: RecordBatchReader,
+    private readonly signal?: AbortSignal
+  ) {
+    if (signal?.aborted) {
+      this.onAbort();
+    } else {
+      signal?.addEventListener('abort', this.onAbort, { once: true });
+    }
+  }
+
+  /** Schema of the result set (available before any batch is read). */
+  get schema(): Schema {
+    return this.reader.schema;
+  }
+
+  /** True once the stream has been fully consumed or cancelled. */
+  get done(): boolean {
+    return this.released;
+  }
+
+  /**
+   * Stops reading and releases the underlying stream. Safe to call more
+   * than once and after the stream has been consumed.
+   */
+  async cancel(): Promise<void> {
+    if (this.released) return;
+    this.released = true;
+    this.signal?.removeEventListener('abort', this.onAbort);
+    try {
+      await this.reader.cancel();
+    } catch {
+      // stream already closed by the driver
+    }
+  }
+
+  private cancelledError(): QueryCancelledError {
+    return new QueryCancelledError('Query cancelled while fetching results', this.abortReason);
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<RecordBatch, void, undefined> {
+    if (this.abortedBySignal) throw this.cancelledError();
+    if (this.released) return;
+    try {
+      for await (const batch of this.reader) {
+        if (this.abortedBySignal) throw this.cancelledError();
+        yield batch;
+      }
+      if (this.abortedBySignal) throw this.cancelledError();
+    } catch (error) {
+      if (error instanceof QueryCancelledError) throw error;
+      if (this.abortedBySignal) throw this.cancelledError();
+      throw toClientError(error, 'Failed to read query results', FlightSQLError);
+    } finally {
+      await this.cancel();
+    }
+  }
+
+  /** Reads every remaining batch and returns them as one Arrow `Table`. */
+  async toTable(): Promise<Table> {
+    /* eslint-disable unicorn/prefer-array-from-async -- lib is ES2022 (no Array.fromAsync typings) */
+    const batches: RecordBatch[] = [];
+    for await (const batch of this) {
+      batches.push(batch);
+    }
+    /* eslint-enable unicorn/prefer-array-from-async */
+    return new Table(this.schema, batches);
+  }
+}
+
+/** Releases an ADBC statement, ignoring "already closed" errors. */
+async function closeQuietly(stmt: AdbcStatement): Promise<void> {
+  try {
+    await stmt.close();
+  } catch {
+    // already released (e.g. by an abort handler) — nothing to do
   }
 }
 

@@ -24,6 +24,8 @@ A TypeScript/JavaScript client for [GizmoSQL](https://github.com/gizmodata/gizmo
 - Bearer token authentication
 - OAuth/SSO URL discovery
 - Query execution with Apache Arrow table results
+- Streaming results (`executeStream`) as Arrow record batches, with early cancellation
+- Query cancellation and client-side deadlines via `AbortSignal` (the server interrupts the statement)
 - Parameter binding (`?` / `$1` placeholders) with typed Arrow values
 - Database metadata operations (catalogs, schemas, tables)
 - Prepared statements support
@@ -70,7 +72,30 @@ interface FlightClientConfig {
   username?: string;      // Username for basic auth
   password?: string;      // Password for basic auth
   token?: string;         // Bearer token for token auth
+  oauthPort?: number;     // OAuth HTTP port for discoverOAuthUrl() (default: 31339)
+  adbcOptions?: Record<string, string>; // Extra driver options (see below)
 }
+```
+
+`adbcOptions` are passed straight to the native GizmoSQL ADBC driver after
+the options derived from the fields above (so they can override them). Use
+them for driver features the typed fields do not cover, for example
+per-request call headers (`adbc.flight.sql.rpc.call_header.<name>`), custom
+root certificates (`adbc.flight.sql.client_option.tls_root_certs`), or the
+driver's built-in OAuth/SSO flow (`adbc.gizmosql.auth_type: "external"`).
+The full list is in the
+[gizmosql-adbc README](https://github.com/gizmodata/gizmosql-adbc#configuration).
+
+```typescript
+const client = new FlightSQLClient({
+  host: "localhost",
+  port: 31337,
+  username: "gizmosql",
+  password: "your-password",
+  adbcOptions: {
+    "adbc.flight.sql.rpc.call_header.x-request-id": "abc-123",
+  },
+});
 ```
 
 ### Using Bearer Token Authentication
@@ -186,6 +211,82 @@ const rows = table.toArray();
 // Statements without a result set: returns the affected-row count
 const deleted = await client.executeUpdate("DELETE FROM users WHERE active = false");
 ```
+
+### Streaming Results
+
+`execute()` materializes the whole result. For large results use
+`executeStream()`, which returns a `QueryStream`: an async iterable of
+Apache Arrow `RecordBatch`es that are pulled from the server as you
+iterate. Leaving the loop early (or calling `cancel()`) releases the
+server-side stream, and the client remains usable.
+
+```typescript
+const stream = await client.executeStream("SELECT * FROM events ORDER BY ts");
+console.log(stream.schema.fields.map((f) => f.name));
+
+let rows = 0;
+for await (const batch of stream) {
+  rows += batch.numRows;
+  if (rows >= 10_000) break; // stop early; no further batches are fetched
+}
+
+// Or collect what remains into a Table
+const table = await (await client.executeStream("SELECT * FROM small")).toTable();
+```
+
+Parameters work the same way as with `execute()`:
+`client.executeStream("SELECT * FROM t WHERE id > ?", [100])`.
+
+`executeStream()` resolves once the server has finished *executing* the
+statement; iterate to fetch the rows. To cancel during execution, pass a
+`signal` (next section).
+
+### Cancelling Queries and Timeouts
+
+`execute()`, `executeStream()` and `executeUpdate()` take an optional
+`{ signal }` (a standard `AbortSignal`). Aborting it while the server is
+still executing closes the underlying ADBC statement; the Go driver relays
+that as a Flight SQL cancel and GizmoSQL (>= 1.38.0) interrupts the running
+DuckDB statement. Aborting while rows are being fetched releases the result
+stream. Either way the call rejects with `QueryCancelledError`, and the
+client remains usable.
+
+```typescript
+import { FlightSQLClient, QueryCancelledError } from "@gizmodata/gizmosql-client";
+
+// Client-side deadline: 30 seconds
+try {
+  const table = await client.execute("SELECT ... FROM huge", undefined, {
+    signal: AbortSignal.timeout(30_000),
+  });
+} catch (err) {
+  if (err instanceof QueryCancelledError) {
+    console.log("cancelled:", err.reason);
+  }
+}
+
+// Manual cancellation (e.g. from a UI "stop" button)
+const controller = new AbortController();
+const pending = client.execute("SELECT ... FROM huge", undefined, { signal: controller.signal });
+stopButton.onclick = () => controller.abort();
+```
+
+Cancellation applies to *queries*. `executeUpdate()` only honors a signal
+that is already aborted when it is called: the native driver does not yet
+cancel an in-flight Flight SQL `DoPut` update when the statement is
+released (GizmoSQL does interrupt updates whose client disconnects), so a
+running INSERT/UPDATE/DELETE/DDL completes and its affected-row count is
+returned.
+
+Server-side alternative, which covers DML/DDL too: `SET gizmosql.query_timeout
+= <seconds>` on the session makes GizmoSQL interrupt any statement running
+longer than that (the call rejects with a "timed out" `FlightSQLError`).
+GizmoSQL >= 1.38.0 also interrupts statements whose client process dies or
+drops the connection.
+
+Note that `close()` on the client does **not** cancel a statement that is
+still executing (the driver manager releases the connection only after the
+statement finishes); use a `signal` for that.
 
 ### Parameter Binding
 

@@ -32,3 +32,15 @@ export class SchemaError extends FlightError {
     this.name = 'SchemaError';
   }
 }
+
+/**
+ * Thrown when a statement is cancelled through the `signal` option of
+ * `execute()` / `executeStream()` / `executeUpdate()` (including
+ * `AbortSignal.timeout()`), or when the server interrupts it.
+ */
+export class QueryCancelledError extends FlightSQLError {
+  constructor(message: string = 'Query cancelled', public reason?: unknown) {
+    super(message);
+    this.name = 'QueryCancelledError';
+  }
+}
