@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-09-09
+
+### Changed
+- **Bundled native driver bumped to `gizmosql-adbc` v2.0.13** (was v2.0.12;
+  hashes refreshed in `driver-manifest.json`). v2.0.13 fixes parameterized
+  DDL/DML issued through the query path (`execute(sql, params)` for an
+  `INSERT`/`UPDATE`/`DELETE`) being silently lost: bound statements skipped
+  the driver's immediate-execution routing, ran lazily on the server, and
+  could be interrupted by the driver's own abandoned-stream cancel. Bound
+  DDL/DML now executes immediately through the prepared-statement update
+  RPC, matching the literal form.
+
 ## [2.2.0] - 2026-09-03
 
 ### Added
