@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Publishing is now gated on the full test workflow: `publish.yml` calls
+  `test.yml` (typecheck, lint, unit tests and the live-GizmoSQL integration
+  suite) and only publishes to npm / GitHub if it passes on the tagged
+  commit. It previously skipped the integration suite. The publish trigger
+  is narrowed from any tag to `v*` tags.
+
 ### Fixed
 - CI `integration` job: the parameter-binding suite started its own
   GizmoSQL container even under CI, where the Actions service container
