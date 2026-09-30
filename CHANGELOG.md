@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-09-30
+
+### Changed
+- **Bundled native driver bumped to `gizmosql-adbc` v2.0.14** (was v2.0.13;
+  hashes refreshed in `driver-manifest.json`). v2.0.14 is a maintenance
+  release: current Go dependencies (arrow-go 18.8.0, grpc 1.84.0,
+  OpenTelemetry 1.46.0, `golang.org/x/*`) built with Go 1.26.8.
+
 ## [2.2.1] - 2026-09-09
 
 ### Changed
