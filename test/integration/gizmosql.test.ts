@@ -74,10 +74,13 @@ function isContainerRunning(): boolean {
 }
 
 function startGizmoSQL(): void {
-  if (EXTERNAL_SERVER) {
+  // In CI the server runs as a GitHub Actions service container (generated
+  // name, already bound to GIZMOSQL_PORT), so starting our own would fail
+  // with "port is already allocated".
+  if (EXTERNAL_SERVER || process.env.CI) {
     return;
   }
-  // Check if already running (e.g., in CI with services)
+  // Check if already running (e.g., from an earlier local run)
   if (isContainerRunning()) {
     console.log('GizmoSQL container already running');
     return;
@@ -148,11 +151,7 @@ describeIfDocker('GizmoSQL Integration Tests', () => {
   let client: FlightSQLClient;
 
   beforeAll(async () => {
-    // In CI, the container is started by the service
-    // Locally, we need to start it ourselves
-    if (!process.env.CI) {
-      startGizmoSQL();
-    }
+    startGizmoSQL();
     await waitForGizmoSQL();
   }, 60000);
 
@@ -338,9 +337,7 @@ describeIfDocker('GizmoSQL Semantics (via the Go driver)', () => {
   let client: FlightSQLClient;
 
   beforeAll(async () => {
-    if (!process.env.CI) {
-      startGizmoSQL();
-    }
+    startGizmoSQL();
     await waitForGizmoSQL();
   }, 60000);
 
@@ -518,9 +515,7 @@ describeIfDocker('Streaming results (executeStream)', () => {
   let client: FlightSQLClient;
 
   beforeAll(async () => {
-    if (!process.env.CI) {
-      startGizmoSQL();
-    }
+    startGizmoSQL();
     await waitForGizmoSQL();
   }, 60000);
 
@@ -626,9 +621,7 @@ describeIfDocker('Cancellation and timeouts', () => {
   let client: FlightSQLClient;
 
   beforeAll(async () => {
-    if (!process.env.CI) {
-      startGizmoSQL();
-    }
+    startGizmoSQL();
     await waitForGizmoSQL();
   }, 60000);
 

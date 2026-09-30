@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- CI `integration` job: the parameter-binding suite started its own
+  GizmoSQL container even under CI, where the Actions service container
+  already holds port 31337, so its 10 tests failed with "port is already
+  allocated" on every run. The CI check now lives in `startGizmoSQL()`
+  itself (matching `stopGizmoSQL()`), so no suite can skip it. Test-only
+  change; the published package is unaffected.
+
 ## [2.2.2] - 2026-09-30
 
 ### Changed
